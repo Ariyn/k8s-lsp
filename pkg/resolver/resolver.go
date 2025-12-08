@@ -425,9 +425,16 @@ func findNodeAt(node *yaml.Node, line, col int) (*yaml.Node, []string) {
 				if found != nil {
 					return found, append([]string{keyNode.Value}, subPath...)
 				}
-				// If recursion failed but we matched the start of the block/value,
-				// maybe we are just pointing at the parent object?
-				// For now, return nil if children don't match.
+			} else {
+				// Fallback: if key is on the same line, and cursor is after key, and valNode is null/empty scalar on same line
+				// This handles completion for empty values like "key: "
+				if keyNode.Line == line && valNode.Kind == yaml.ScalarNode && valNode.Line == line && valNode.Value == "" {
+					// Check if cursor is after the key
+					keyEndCol := keyNode.Column + len(keyNode.Value)
+					if col > keyEndCol {
+						return valNode, []string{keyNode.Value}
+					}
+				}
 			}
 		}
 	} else if node.Kind == yaml.SequenceNode {
@@ -458,7 +465,11 @@ func isKeyMatch(node *yaml.Node, line, col int) bool {
 		endCol += 2
 	}
 	// Allow cursor to be at the end of the word
-	return col >= node.Column && col <= endCol
+	match := col >= node.Column && col <= endCol
+	if match {
+		// log.Debug().Str("key", node.Value).Msg("Key matched")
+	}
+	return match
 }
 
 func isValueMatch(node *yaml.Node, line, col int) bool {
@@ -471,7 +482,11 @@ func isValueMatch(node *yaml.Node, line, col int) bool {
 			endCol += 2
 		}
 		// Allow cursor to be at the end of the word
-		return line == node.Line && col >= node.Column && col <= endCol
+		match := line == node.Line && col >= node.Column && col <= endCol
+		if !match && line == node.Line {
+			// log.Debug().Str("val", node.Value).Int("nodeCol", node.Column).Int("endCol", endCol).Int("cursorCol", col).Msg("Scalar mismatch")
+		}
+		return match
 	}
 
 	// If node is multiline (like a block), check if line is within range

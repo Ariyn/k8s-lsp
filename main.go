@@ -85,6 +85,7 @@ func main() {
 		TextDocumentDidChange:  textDocumentDidChange,
 		TextDocumentDefinition: textDocumentDefinition,
 		TextDocumentReferences: textDocumentReferences,
+		TextDocumentCompletion: textDocumentCompletion,
 	}
 
 	s := server.NewServer(&handler, lsName, false)
@@ -101,6 +102,9 @@ func initialize(context *glsp.Context, params *protocol.InitializeParams) (any, 
 		TextDocumentSync:   protocol.TextDocumentSyncKindFull,
 		DefinitionProvider: true,
 		ReferencesProvider: true,
+		CompletionProvider: &protocol.CompletionOptions{
+			TriggerCharacters: []string{":", " "},
+		},
 	}
 
 	// Determine root path
@@ -239,4 +243,33 @@ func textDocumentReferences(context *glsp.Context, params *protocol.ReferencePar
 	}
 
 	return locs, nil
+}
+
+func textDocumentCompletion(context *glsp.Context, params *protocol.CompletionParams) (any, error) {
+	log.Debug().Str("uri", params.TextDocument.URI).Int("line", int(params.Position.Line)).Int("char", int(params.Position.Character)).Msg("Received completion request")
+
+	uri := params.TextDocument.URI
+	content, ok := state.Documents[uri]
+	if !ok {
+		parsed, err := url.Parse(uri)
+		if err == nil && parsed.Scheme == "file" {
+			bytes, err := os.ReadFile(parsed.Path)
+			if err == nil {
+				content = string(bytes)
+				state.Documents[uri] = content
+			}
+		}
+	}
+
+	if content == "" {
+		return nil, nil
+	}
+
+	items, err := state.Resolver.Completion(content, int(params.Position.Line), int(params.Position.Character))
+	if err != nil {
+		log.Error().Err(err).Msg("Failed to resolve completion")
+		return nil, nil
+	}
+
+	return items, nil
 }

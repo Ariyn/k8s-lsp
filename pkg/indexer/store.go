@@ -106,3 +106,15 @@ func (s *Store) FindLabelReferences(value string) []*K8sResource {
 	}
 	return results
 }
+
+func (s *Store) ListByKind(kind string) []*K8sResource {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	var results []*K8sResource
+	for _, res := range s.resources {
+		if res.Kind == kind {
+			results = append(results, res)
+		}
+	}
+	return results
+}
