@@ -6,7 +6,7 @@ symbols:
     definitions:
       - kinds: ["Deployment", "StatefulSet", "DaemonSet", "Job", "CronJob", "Pod"]
         path: "metadata.name"
-      - kinds: ["Service", "Ingress", "ConfigMap", "Secret", "PersistentVolumeClaim", "Namespace"]
+      - kinds: ["Service", "Ingress", "ConfigMap", "Secret", "PersistentVolumeClaim", "Namespace", "ServiceAccount", "Role", "ClusterRole"]
         path: "metadata.name"
 
   - name: k8s.label
@@ -48,3 +48,59 @@ references:
       kinds: ["*"] # All resources can have namespace ref in metadata? No, usually it's metadata.namespace
       path: "metadata.namespace"
     # Looks for Namespace
+
+  - name: workload.env.secret
+    symbol: k8s.resource.name
+    targetKind: Secret
+    match:
+      kinds: ["Deployment", "StatefulSet", "DaemonSet", "Job"]
+      path: "spec.template.spec.containers[].env[].valueFrom.secretKeyRef.name"
+
+  - name: workload.envfrom.secret
+    symbol: k8s.resource.name
+    targetKind: Secret
+    match:
+      kinds: ["Deployment", "StatefulSet", "DaemonSet", "Job"]
+      path: "spec.template.spec.containers[].envFrom[].secretRef.name"
+
+  - name: workload.volume.secret
+    symbol: k8s.resource.name
+    targetKind: Secret
+    match:
+      kinds: ["Deployment", "StatefulSet", "DaemonSet", "Job"]
+      path: "spec.template.spec.volumes[].secret.secretName"
+
+  - name: workload.imagePullSecrets
+    symbol: k8s.resource.name
+    targetKind: Secret
+    match:
+      kinds: ["Deployment", "StatefulSet", "DaemonSet", "Job"]
+      path: "spec.template.spec.imagePullSecrets[].name"
+
+  - name: workload.env.configmap
+    symbol: k8s.resource.name
+    targetKind: ConfigMap
+    match:
+      kinds: ["Deployment", "StatefulSet", "DaemonSet", "Job"]
+      path: "spec.template.spec.containers[].env[].valueFrom.configMapKeyRef.name"
+
+  - name: workload.envfrom.configmap
+    symbol: k8s.resource.name
+    targetKind: ConfigMap
+    match:
+      kinds: ["Deployment", "StatefulSet", "DaemonSet", "Job"]
+      path: "spec.template.spec.containers[].envFrom[].configMapRef.name"
+
+  - name: workload.serviceaccount
+    symbol: k8s.resource.name
+    targetKind: ServiceAccount
+    match:
+      kinds: ["Deployment", "StatefulSet", "DaemonSet", "Job"]
+      path: "spec.template.spec.serviceAccountName"
+
+  - name: workload.volume.pvc
+    symbol: k8s.resource.name
+    targetKind: PersistentVolumeClaim
+    match:
+      kinds: ["Deployment", "StatefulSet", "DaemonSet", "Job"]
+      path: "spec.template.spec.volumes[].persistentVolumeClaim.claimName"
