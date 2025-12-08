@@ -1,0 +1,50 @@
+version: 1
+symbols:
+  - name: k8s.resource.name
+    description: "Resource Name (Kind + Namespace + Name)"
+    keyTemplate: "{{ .kind }}/{{ .namespace }}/{{ .name }}"
+    definitions:
+      - kinds: ["Deployment", "StatefulSet", "DaemonSet", "Job", "CronJob", "Pod"]
+        path: "metadata.name"
+      - kinds: ["Service", "Ingress", "ConfigMap", "Secret", "PersistentVolumeClaim", "Namespace"]
+        path: "metadata.name"
+
+  - name: k8s.label
+    description: "Label (Namespace + Key + Value)"
+    keyTemplate: "label/{{ .namespace }}/{{ .key }}={{ .value }}"
+    definitions:
+      - kinds: ["Deployment", "StatefulSet", "DaemonSet", "Job", "Pod", "Service"]
+        path: "metadata.labels"
+
+references:
+  - name: service.selector.label
+    symbol: k8s.label
+    targetKind: Pod
+    match:
+      kinds: ["Service"]
+      path: "spec.selector"
+
+  - name: ingress.backend.service
+    symbol: k8s.resource.name
+    targetKind: Service
+    match:
+      kinds: ["Ingress"]
+      path: "spec.rules[].http.paths[].backend.service.name"
+    # Implicitly we know this looks for a Service, but the symbol is generic.
+    # We might need to handle this ambiguity or just search all.
+
+  - name: deployment.configmap-ref
+    symbol: k8s.resource.name
+    targetKind: ConfigMap
+    match:
+      kinds: ["Deployment"]
+      path: "spec.template.spec.volumes[].configMap.name"
+    # Looks for ConfigMap
+
+  - name: namespace.ref
+    symbol: k8s.resource.name
+    targetKind: Namespace
+    match:
+      kinds: ["*"] # All resources can have namespace ref in metadata? No, usually it's metadata.namespace
+      path: "metadata.namespace"
+    # Looks for Namespace

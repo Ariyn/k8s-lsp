@@ -1,0 +1,30 @@
+{
+	"version": "2.0.0",
+	"tasks": [
+		{
+			"type": "npm",
+			"script": "compile",
+			"path": "client",
+			"group": {
+				"kind": "build",
+				"isDefault": true
+			},
+			"label": "npm: compile",
+			"detail": "compile client extension"
+		},
+		{
+			"label": "go: build",
+			"type": "shell",
+			"command": "go build .",
+			"group": "build"
+		},
+		{
+			"label": "build all",
+			"dependsOn": ["npm: compile", "go: build"],
+			"group": {
+				"kind": "build",
+				"isDefault": true
+			}
+		}
+	]
+}

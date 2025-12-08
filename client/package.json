@@ -1,0 +1,66 @@
+{
+  "name": "k8s-lsp-client",
+  "displayName": "Kubernetes LSP Client",
+  "description": "VS Code Client for Kubernetes LSP",
+  "version": "0.0.1",
+  "publisher": "k8s-lsp",
+  "engines": {
+    "vscode": "^1.75.0"
+  },
+  "categories": [
+    "Programming Languages"
+  ],
+  "activationEvents": [
+    "onLanguage:yaml"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "languages": [
+      {
+        "id": "yaml",
+        "extensions": [
+          ".yaml",
+          ".yml"
+        ],
+        "aliases": [
+          "YAML"
+        ]
+      }
+    ],
+    "configuration": {
+      "type": "object",
+      "title": "Kubernetes LSP",
+      "properties": {
+        "k8sLsp.serverPath": {
+          "type": "string",
+          "default": "k8s-lsp",
+          "description": "Path to the k8s-lsp executable"
+        },
+        "k8sLsp.trace.server": {
+          "scope": "window",
+          "type": "string",
+          "enum": [
+            "off",
+            "messages",
+            "verbose"
+          ],
+          "default": "off",
+          "description": "Traces the communication between VS Code and the language server."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "tsc -b",
+    "watch": "tsc -b -w"
+  },
+  "devDependencies": {
+    "@types/node": "^16.11.7",
+    "@types/vscode": "^1.75.0",
+    "typescript": "^4.9.5"
+  },
+  "dependencies": {
+    "vscode-languageclient": "^8.1.0"
+  }
+}
