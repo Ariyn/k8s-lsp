@@ -12,23 +12,23 @@ let client: LanguageClient;
 
 export function activate(context: ExtensionContext) {
   // The server is implemented in Go.
-  // For debugging, we assume the binary is built and located in the root of the workspace.
-  // In a real extension, you would bundle the binary or download it.
   
-  // Default to looking for 'k8s-lsp' in the workspace root if we are in development mode
+  // Check if we are in development mode
+  const isDev = context.extensionMode === 2; // ExtensionMode.Development
+
   let serverPath = workspace.getConfiguration('k8sLsp').get<string>('serverPath');
   
   if (!serverPath || serverPath === 'k8s-lsp') {
-      // If running from source (F5), try to find the binary in the root of the project
-      if (context.extensionMode === 2) { // ExtensionMode.Development
-          // context.extensionPath is the path to the client folder
-          // The binary is in the parent folder (project root)
+      if (isDev) {
+          // In dev mode, look for binary in the root of the workspace
           serverPath = path.join(context.extensionPath, '..', 'k8s-lsp');
+      } else {
+          // In production, look for binary in the bin folder of the extension
+          // We support linux, windows (win32), and macos (darwin)
+          const platform = process.platform;
+          const ext = platform === 'win32' ? '.exe' : '';
+          serverPath = context.asAbsolutePath(path.join('bin', platform, 'k8s-lsp' + ext));
       }
-  }
-
-  if (!serverPath) {
-      serverPath = 'k8s-lsp'; // Fallback to PATH
   }
 
   // If the extension is launched in debug mode then the debug server options are used
