@@ -30,12 +30,6 @@ mkdir -p "$BUILD_DIR/bin/linux/rules"
 GOOS=linux GOARCH=amd64 go build -o "$BUILD_DIR/bin/linux/k8s-lsp" .
 cp rules/k8s.yaml "$BUILD_DIR/bin/linux/rules/"
 
-# Windows
-echo "Building for Windows..."
-mkdir -p "$BUILD_DIR/bin/win32/rules"
-GOOS=windows GOARCH=amd64 go build -o "$BUILD_DIR/bin/win32/k8s-lsp.exe" .
-cp rules/k8s.yaml "$BUILD_DIR/bin/win32/rules/"
-
 # macOS (Darwin) - AMD64 and ARM64 (Universal binary not supported easily in this structure, so just AMD64 for now or both?)
 # VS Code runs on Node, process.platform is 'darwin'.
 # We can just provide amd64, Rosetta handles it on M1/M2 usually. Or we can try to detect arch in extension.ts but process.arch is available.
