@@ -32,7 +32,7 @@ var state *ServerState
 
 func main() {
 	// Configure logging to file and stderr
-	logFile, err := os.OpenFile("/tmp/k8s-lsp.log", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	logFile, err := os.OpenFile(getLogFilePath(), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 	if err != nil {
 		// Fallback to stderr if file fails
 		log.Logger = log.Output(zerolog.ConsoleWriter{Out: os.Stderr})
