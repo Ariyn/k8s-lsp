@@ -25,6 +25,10 @@ jobs:
             arch: arm64
             goos: darwin
             goarch: arm64
+          - os: windows
+            arch: x64
+            goos: windows
+            goarch: amd64
 
     steps:
     - name: Checkout code
@@ -46,7 +50,7 @@ jobs:
         cp rules/k8s.yaml output/rules/
 
     - name: Upload Artifact
-      uses: actions/upload-artifact@v3
+      uses: actions/upload-artifact@v4
       with:
         name: server-binaries-${{ matrix.os }}-${{ matrix.arch }}
         path: output/
@@ -70,7 +74,7 @@ jobs:
       run: npm install -g @vscode/vsce
 
     - name: Download All Artifacts
-      uses: actions/download-artifact@v3
+      uses: actions/download-artifact@v4
       with:
         path: bin-temp
 
