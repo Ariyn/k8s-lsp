@@ -7,10 +7,24 @@ on:
   workflow_dispatch:
 
 jobs:
-  build:
+  build_server:
+    name: Build Server (${{ matrix.os }} - ${{ matrix.arch }})
     runs-on: ubuntu-latest
-    permissions:
-      contents: write
+    strategy:
+      matrix:
+        include:
+          - os: linux
+            arch: x64
+            goos: linux
+            goarch: amd64
+          - os: darwin
+            arch: x64
+            goos: darwin
+            goarch: amd64
+          - os: darwin
+            arch: arm64
+            goos: darwin
+            goarch: arm64
 
     steps:
     - name: Checkout code
@@ -21,6 +35,32 @@ jobs:
       with:
         go-version: '1.25'
 
+    - name: Build Binary
+      env:
+        GOOS: ${{ matrix.goos }}
+        GOARCH: ${{ matrix.goarch }}
+      run: |
+        mkdir -p output
+        go build -o output/k8s-lsp${{ matrix.os == 'windows' && '.exe' || '' }} .
+        mkdir -p output/rules
+        cp rules/k8s.yaml output/rules/
+
+    - name: Upload Artifact
+      uses: actions/upload-artifact@v3
+      with:
+        name: server-binaries-${{ matrix.os }}-${{ matrix.arch }}
+        path: output/
+
+  package:
+    needs: build_server
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v3
+
     - name: Setup Node.js
       uses: actions/setup-node@v3
       with:
@@ -29,8 +69,42 @@ jobs:
     - name: Install vsce
       run: npm install -g @vscode/vsce
 
-    - name: Build and Package
-      run: ./package.sh
+    - name: Download All Artifacts
+      uses: actions/download-artifact@v3
+      with:
+        path: bin-temp
+
+    - name: Prepare and Package
+      run: |
+        # Create build directory
+        mkdir -p build
+        
+        # Copy client source
+        cp -r client/. build/
+        
+        # Create bin directory
+        mkdir -p build/bin
+        
+        # Copy binaries from artifacts
+        mkdir -p build/bin/linux/x64
+        cp -r bin-temp/server-binaries-linux-x64/* build/bin/linux/x64/
+        
+        mkdir -p build/bin/darwin/x64
+        cp -r bin-temp/server-binaries-darwin-x64/* build/bin/darwin/x64/
+        
+        mkdir -p build/bin/darwin/arm64
+        cp -r bin-temp/server-binaries-darwin-arm64/* build/bin/darwin/arm64/
+        
+        # Verify structure
+        ls -R build/bin
+        
+        # Build extension
+        cd build
+        npm install
+        npm run compile
+        
+        # Package
+        vsce package -o ../k8s-lsp-client.vsix
 
     - name: Create Release
       uses: softprops/action-gh-release@v1

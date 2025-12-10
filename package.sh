@@ -26,18 +26,21 @@ echo "Building Go binaries..."
 
 # Linux
 echo "Building for Linux..."
-mkdir -p "$BUILD_DIR/bin/linux/rules"
-GOOS=linux GOARCH=amd64 go build -o "$BUILD_DIR/bin/linux/k8s-lsp" .
-cp rules/k8s.yaml "$BUILD_DIR/bin/linux/rules/"
+mkdir -p "$BUILD_DIR/bin/linux/x64/rules"
+GOOS=linux GOARCH=amd64 go build -o "$BUILD_DIR/bin/linux/x64/k8s-lsp" .
+cp rules/k8s.yaml "$BUILD_DIR/bin/linux/x64/rules/"
 
-# macOS (Darwin) - AMD64 and ARM64 (Universal binary not supported easily in this structure, so just AMD64 for now or both?)
-# VS Code runs on Node, process.platform is 'darwin'.
-# We can just provide amd64, Rosetta handles it on M1/M2 usually. Or we can try to detect arch in extension.ts but process.arch is available.
-# For simplicity, let's just build amd64 for darwin.
-echo "Building for macOS..."
-mkdir -p "$BUILD_DIR/bin/darwin/rules"
-GOOS=darwin GOARCH=amd64 go build -o "$BUILD_DIR/bin/darwin/k8s-lsp" .
-cp rules/k8s.yaml "$BUILD_DIR/bin/darwin/rules/"
+# macOS (Darwin) - AMD64
+echo "Building for macOS (AMD64)..."
+mkdir -p "$BUILD_DIR/bin/darwin/x64/rules"
+GOOS=darwin GOARCH=amd64 go build -o "$BUILD_DIR/bin/darwin/x64/k8s-lsp" .
+cp rules/k8s.yaml "$BUILD_DIR/bin/darwin/x64/rules/"
+
+# macOS (Darwin) - ARM64
+echo "Building for macOS (ARM64)..."
+mkdir -p "$BUILD_DIR/bin/darwin/arm64/rules"
+GOOS=darwin GOARCH=arm64 go build -o "$BUILD_DIR/bin/darwin/arm64/k8s-lsp" .
+cp rules/k8s.yaml "$BUILD_DIR/bin/darwin/arm64/rules/"
 
 # 3. (Skipped as we did it per platform)
 

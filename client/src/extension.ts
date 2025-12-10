@@ -24,10 +24,11 @@ export function activate(context: ExtensionContext) {
           serverPath = path.join(context.extensionPath, '..', 'k8s-lsp');
       } else {
           // In production, look for binary in the bin folder of the extension
-          // We support linux, windows (win32), and macos (darwin)
+          // We support linux, windows (win32), and macos (darwin) with different architectures
           const platform = process.platform;
+          const arch = process.arch;
           const ext = platform === 'win32' ? '.exe' : '';
-          serverPath = context.asAbsolutePath(path.join('bin', platform, 'k8s-lsp' + ext));
+          serverPath = context.asAbsolutePath(path.join('bin', platform, arch, 'k8s-lsp' + ext));
       }
   }
 
