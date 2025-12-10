@@ -99,6 +99,9 @@ jobs:
         mkdir -p build/bin/darwin/arm64
         cp -r bin-temp/server-binaries-darwin-arm64/* build/bin/darwin/arm64/
         
+        mkdir -p build/bin/windows/x64
+        cp -r bin-temp/server-binaries-windows-x64/* build/bin/windows/x64/
+        
         # Verify structure
         ls -R build/bin
         
