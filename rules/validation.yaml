@@ -1,0 +1,34 @@
+rules:
+  - kind: "Service"
+    checks:
+      - type: "reference"
+        path: "spec.selector"
+        targetKind: "Deployment"
+        targetPath: "spec.template.metadata.labels"
+        message: "No Deployment found matching this selector"
+
+  - kind: "Ingress"
+    checks:
+      - type: "reference"
+        path: "spec.rules[*].http.paths[*].backend.service.name"
+        targetKind: "Service"
+        targetPath: "metadata.name"
+        message: "Service not found"
+
+  - kind: "Deployment"
+    checks:
+      - type: "reference"
+        path: "spec.template.spec.serviceAccountName"
+        targetKind: "ServiceAccount"
+        targetPath: "metadata.name"
+        message: "ServiceAccount not found"
+      - type: "reference"
+        path: "spec.template.spec.containers[*].envFrom[*].configMapRef.name"
+        targetKind: "ConfigMap"
+        targetPath: "metadata.name"
+        message: "ConfigMap not found"
+      - type: "reference"
+        path: "spec.template.spec.containers[*].envFrom[*].secretRef.name"
+        targetKind: "Secret"
+        targetPath: "metadata.name"
+        message: "Secret not found"

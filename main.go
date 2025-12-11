@@ -8,6 +8,7 @@ import (
 	"k8s-lsp/pkg/config"
 	"k8s-lsp/pkg/indexer"
 	"k8s-lsp/pkg/resolver"
+	"k8s-lsp/pkg/validator"
 
 	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
@@ -24,6 +25,7 @@ type ServerState struct {
 	Store     *indexer.Store
 	Indexer   *indexer.Indexer
 	Resolver  *resolver.Resolver
+	Validator *validator.Validator
 	Documents map[string]string
 	RootPath  string
 }
@@ -69,10 +71,17 @@ func main() {
 	store := indexer.NewStore()
 	idx := indexer.NewIndexer(store, cfg)
 	res := resolver.NewResolver(store, cfg)
+
+	val, err := validator.NewValidator(filepath.Join(configPath, "rules/validation.yaml"), store)
+	if err != nil {
+		log.Error().Err(err).Msg("Failed to load validation rules")
+	}
+
 	state = &ServerState{
 		Store:     store,
 		Indexer:   idx,
 		Resolver:  res,
+		Validator: val,
 		Documents: make(map[string]string),
 	}
 
@@ -157,6 +166,7 @@ func setTrace(context *glsp.Context, params *protocol.SetTraceParams) error {
 
 func textDocumentDidOpen(context *glsp.Context, params *protocol.DidOpenTextDocumentParams) error {
 	state.Documents[params.TextDocument.URI] = params.TextDocument.Text
+	go publishDiagnostics(context, params.TextDocument.URI, params.TextDocument.Text)
 	return nil
 }
 
@@ -166,11 +176,13 @@ func textDocumentDidChange(context *glsp.Context, params *protocol.DidChangeText
 		change, ok := params.ContentChanges[0].(protocol.TextDocumentContentChangeEvent)
 		if ok {
 			state.Documents[params.TextDocument.URI] = change.Text
+			go publishDiagnostics(context, params.TextDocument.URI, change.Text)
 		} else {
 			// Fallback or log error if type assertion fails
 			// In some versions it might be TextDocumentContentChangeEventWhole
 			if changeWhole, ok := params.ContentChanges[0].(protocol.TextDocumentContentChangeEventWhole); ok {
 				state.Documents[params.TextDocument.URI] = changeWhole.Text
+				go publishDiagnostics(context, params.TextDocument.URI, changeWhole.Text)
 			}
 		}
 	}
@@ -272,4 +284,20 @@ func textDocumentCompletion(context *glsp.Context, params *protocol.CompletionPa
 	}
 
 	return items, nil
+}
+
+func publishDiagnostics(context *glsp.Context, uri string, content string) {
+	if state.Validator == nil {
+		return
+	}
+
+	diagnostics := state.Validator.Validate(uri, content)
+	if diagnostics == nil {
+		diagnostics = []protocol.Diagnostic{}
+	}
+
+	context.Notify("textDocument/publishDiagnostics", protocol.PublishDiagnosticsParams{
+		URI:         uri,
+		Diagnostics: diagnostics,
+	})
 }
