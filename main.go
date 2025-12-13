@@ -95,6 +95,7 @@ func main() {
 		TextDocumentDefinition: textDocumentDefinition,
 		TextDocumentReferences: textDocumentReferences,
 		TextDocumentCompletion: textDocumentCompletion,
+		TextDocumentHover:      textDocumentHover,
 	}
 
 	s := server.NewServer(&handler, lsName, false)
@@ -300,4 +301,33 @@ func publishDiagnostics(context *glsp.Context, uri string, content string) {
 		URI:         uri,
 		Diagnostics: diagnostics,
 	})
+}
+
+func textDocumentHover(context *glsp.Context, params *protocol.HoverParams) (*protocol.Hover, error) {
+	log.Debug().Str("uri", params.TextDocument.URI).Int("line", int(params.Position.Line)).Int("char", int(params.Position.Character)).Msg("Received hover request")
+
+	uri := params.TextDocument.URI
+	content, ok := state.Documents[uri]
+	if !ok {
+		parsed, err := url.Parse(uri)
+		if err == nil && parsed.Scheme == "file" {
+			bytes, err := os.ReadFile(parsed.Path)
+			if err == nil {
+				content = string(bytes)
+				state.Documents[uri] = content
+			}
+		}
+	}
+
+	if content == "" {
+		return nil, nil
+	}
+
+	hover, err := state.Resolver.ResolveHover(content, uri, int(params.Position.Line), int(params.Position.Character))
+	if err != nil {
+		log.Error().Err(err).Msg("Failed to resolve hover")
+		return nil, nil
+	}
+
+	return hover, nil
 }

@@ -1,6 +1,7 @@
 package resolver
 
 import (
+	"fmt"
 	"io"
 	"strings"
 
@@ -19,6 +20,52 @@ type Resolver struct {
 
 func NewResolver(store *indexer.Store, cfg *config.Config) *Resolver {
 	return &Resolver{Store: store, Config: cfg}
+}
+
+func (r *Resolver) ResolveHover(docContent string, uri string, line, col int) (*protocol.Hover, error) {
+	decoder := yaml.NewDecoder(strings.NewReader(docContent))
+
+	for {
+		var node yaml.Node
+		if err := decoder.Decode(&node); err != nil {
+			if err == io.EOF {
+				break
+			}
+			return nil, err
+		}
+
+		targetNode, path := findNodeAt(&node, line+1, col+1)
+		if targetNode != nil {
+			kind := findKind(&node)
+			currentNamespace := findNamespace(&node)
+
+			for _, refRule := range r.Config.References {
+				if matchesKind(refRule.Match.Kinds, kind) && matchPath(path, refRule.Match.Path) {
+					if refRule.Symbol == "k8s.resource.name" {
+						targetKind := refRule.TargetKind
+						ns := currentNamespace
+						if targetKind == "Namespace" {
+							ns = ""
+						}
+
+						res := r.Store.Get(targetKind, ns, targetNode.Value)
+						if res != nil {
+							contents := fmt.Sprintf("**%s**\n\nKind: %s\nNamespace: %s\nFile: %s",
+								res.Name, res.Kind, res.Namespace, res.FilePath)
+
+							return &protocol.Hover{
+								Contents: protocol.MarkupContent{
+									Kind:  protocol.MarkupKindMarkdown,
+									Value: contents,
+								},
+							}, nil
+						}
+					}
+				}
+			}
+		}
+	}
+	return nil, nil
 }
 
 func (r *Resolver) ResolveDefinition(docContent string, uri string, line, col int) ([]protocol.LocationLink, error) {
