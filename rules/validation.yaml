@@ -32,3 +32,24 @@ rules:
         targetKind: "Secret"
         targetPath: "metadata.name"
         message: "Secret not found"
+      - type: "reference"
+        path: "spec.template.spec.volumes[*].persistentVolumeClaim.claimName"
+        targetKind: "PersistentVolumeClaim"
+        targetPath: "metadata.name"
+        message: "PersistentVolumeClaim not found"
+
+  - kind: "PersistentVolumeClaim"
+    checks:
+      - type: "reference"
+        path: "spec.storageClassName"
+        targetKind: "StorageClass"
+        targetPath: "metadata.name"
+        message: "StorageClass not found"
+
+  - kind: "NetworkPolicy"
+    checks:
+      - type: "reference"
+        path: "spec.podSelector"
+        targetKind: "Deployment"
+        targetPath: "spec.template.metadata.labels"
+        message: "No Deployment found matching this selector"
