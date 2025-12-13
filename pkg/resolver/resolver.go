@@ -125,7 +125,14 @@ func (r *Resolver) ResolveDefinition(docContent string, uri string, line, col in
 			}
 
 			for _, refRule := range r.Config.References {
-				if matchesKind(refRule.Match.Kinds, kind) && matchPath(path, refRule.Match.Path) {
+				isMatch := false
+				if refRule.Symbol == "k8s.label" {
+					isMatch = matchPathPrefix(path, refRule.Match.Path)
+				} else {
+					isMatch = matchPath(path, refRule.Match.Path)
+				}
+
+				if matchesKind(refRule.Match.Kinds, kind) && isMatch {
 					if refRule.Symbol == "k8s.label" {
 						labelKey := path[len(path)-1]
 						labelValue := targetNode.Value

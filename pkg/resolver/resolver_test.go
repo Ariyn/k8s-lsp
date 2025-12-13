@@ -347,3 +347,71 @@ spec:
 		t.Errorf("Expected URI file:///tmp/service.yaml, got %s", locs[0].URI)
 	}
 }
+
+func TestResolveDefinition_Label(t *testing.T) {
+	// 1. Setup Config
+	cfg := &config.Config{
+		References: []config.Reference{
+			{
+				Name:       "service.selector.label",
+				Symbol:     "k8s.label",
+				TargetKind: "Pod",
+				Match: config.ReferenceMatch{
+					Kinds: []string{"Service"},
+					Path:  "spec.selector",
+				},
+			},
+		},
+	}
+
+	// 2. Setup Store
+	store := indexer.NewStore()
+	// Add a Pod with the label app=mailpit
+	podRes := &indexer.K8sResource{
+		Kind:      "Pod",
+		Name:      "mailpit-pod",
+		Namespace: "mailpit",
+		FilePath:  "/tmp/pod.yaml",
+		Line:      0,
+		Col:       0,
+		Labels:    map[string]string{"app": "mailpit"},
+	}
+	store.Add(podRes)
+
+	// 3. Create Resolver
+	r := NewResolver(store, cfg)
+
+	// 4. Test Content
+	yamlContent := `apiVersion: v1
+kind: Service
+metadata:
+  name: mailpit
+  namespace: mailpit
+spec:
+  ports:
+  - port: 1025
+    targetPort: 1025
+    name: smtp
+  selector:
+    app: mailpit`
+
+	// Line 11: "    app: mailpit"
+	// 0-based line index: 11
+	// "    app: " is 9 chars. "mailpit" starts at col 9.
+	line := 11
+	col := 9
+
+	// 5. Call ResolveDefinition
+	locs, err := r.ResolveDefinition(yamlContent, "file:///tmp/service.yaml", line, col)
+
+	// 6. Assertions
+	if err != nil {
+		t.Fatalf("ResolveDefinition failed: %v", err)
+	}
+	if len(locs) != 1 {
+		t.Fatalf("Expected 1 location, got %d", len(locs))
+	}
+	if locs[0].TargetURI != "file:///tmp/pod.yaml" {
+		t.Errorf("Expected TargetURI file:///tmp/pod.yaml, got %s", locs[0].TargetURI)
+	}
+}
