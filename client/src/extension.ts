@@ -1,9 +1,11 @@
+import * as fs from 'fs';
 import * as path from 'path';
-import { workspace, ExtensionContext } from 'vscode';
+import { ExtensionContext, window, workspace } from 'vscode';
 
 import {
   LanguageClient,
   LanguageClientOptions,
+  RevealOutputChannelOn,
   ServerOptions,
   TransportKind
 } from 'vscode-languageclient/node';
@@ -11,8 +13,9 @@ import {
 let client: LanguageClient;
 
 export function activate(context: ExtensionContext) {
-  // The server is implemented in Go.
-  
+  const outputChannel = window.createOutputChannel('Kubernetes LSP');
+  outputChannel.appendLine('Activating Kubernetes LSP extension...');
+
   // Check if we are in development mode
   const isDev = context.extensionMode === 2; // ExtensionMode.Development
 
@@ -32,6 +35,18 @@ export function activate(context: ExtensionContext) {
       }
   }
 
+  outputChannel.appendLine(`Extension mode: ${isDev ? 'development' : 'production'}`);
+  outputChannel.appendLine(`Server path: ${serverPath}`);
+
+  // Fail fast with a visible error if the server binary can't be found.
+  if (!fs.existsSync(serverPath)) {
+    const message = `k8s-lsp server binary not found at: ${serverPath}`;
+    outputChannel.appendLine(message);
+    window.showErrorMessage(message);
+    outputChannel.show(true);
+    return;
+  }
+
   // If the extension is launched in debug mode then the debug server options are used
   // Otherwise the run options are used
   const serverOptions: ServerOptions = {
@@ -45,8 +60,10 @@ export function activate(context: ExtensionContext) {
     documentSelector: [{ scheme: 'file', language: 'yaml' }],
     synchronize: {
       // Notify the server about file changes to '.clientrc files contained in the workspace
-      fileEvents: workspace.createFileSystemWatcher('**/*.yaml')
-    }
+      fileEvents: workspace.createFileSystemWatcher('**/*.{yaml,yml}')
+    },
+    outputChannel,
+    revealOutputChannelOn: RevealOutputChannelOn.Error,
   };
 
   // Create the language client and start the client.
@@ -58,7 +75,17 @@ export function activate(context: ExtensionContext) {
   );
 
   // Start the client. This will also launch the server
-  client.start();
+  try {
+    client
+      .start()
+      .catch((err) => {
+        outputChannel.appendLine(`Failed to start language client: ${String(err)}`);
+        outputChannel.show(true);
+      });
+  } catch (err) {
+    outputChannel.appendLine(`Exception while starting language client: ${String(err)}`);
+    outputChannel.show(true);
+  }
 }
 
 export function deactivate(): Thenable<void> | undefined {

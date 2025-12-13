@@ -48,6 +48,7 @@ jobs:
         go build -o output/k8s-lsp${{ matrix.os == 'windows' && '.exe' || '' }} .
         mkdir -p output/rules
         cp rules/k8s.yaml output/rules/
+        cp rules/validation.yaml output/rules/
 
     - name: Upload Artifact
       uses: actions/upload-artifact@v4

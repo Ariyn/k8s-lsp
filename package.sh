@@ -28,19 +28,32 @@ echo "Building Go binaries..."
 echo "Building for Linux..."
 mkdir -p "$BUILD_DIR/bin/linux/x64/rules"
 GOOS=linux GOARCH=amd64 go build -o "$BUILD_DIR/bin/linux/x64/k8s-lsp" .
+chmod +x "$BUILD_DIR/bin/linux/x64/k8s-lsp"
 cp rules/k8s.yaml "$BUILD_DIR/bin/linux/x64/rules/"
+cp rules/validation.yaml "$BUILD_DIR/bin/linux/x64/rules/"
 
 # macOS (Darwin) - AMD64
 echo "Building for macOS (AMD64)..."
 mkdir -p "$BUILD_DIR/bin/darwin/x64/rules"
 GOOS=darwin GOARCH=amd64 go build -o "$BUILD_DIR/bin/darwin/x64/k8s-lsp" .
+chmod +x "$BUILD_DIR/bin/darwin/x64/k8s-lsp"
 cp rules/k8s.yaml "$BUILD_DIR/bin/darwin/x64/rules/"
+cp rules/validation.yaml "$BUILD_DIR/bin/darwin/x64/rules/"
 
 # macOS (Darwin) - ARM64
 echo "Building for macOS (ARM64)..."
 mkdir -p "$BUILD_DIR/bin/darwin/arm64/rules"
 GOOS=darwin GOARCH=arm64 go build -o "$BUILD_DIR/bin/darwin/arm64/k8s-lsp" .
+chmod +x "$BUILD_DIR/bin/darwin/arm64/k8s-lsp"
 cp rules/k8s.yaml "$BUILD_DIR/bin/darwin/arm64/rules/"
+cp rules/validation.yaml "$BUILD_DIR/bin/darwin/arm64/rules/"
+
+# windows (Windows) - AMD64
+echo "Building for Windows (AMD64)..."
+mkdir -p "$BUILD_DIR/bin/windows/x64/rules"
+GOOS=windows GOARCH=amd64 go build -o "$BUILD_DIR/bin/windows/x64/k8s-lsp.exe" .
+cp rules/k8s.yaml "$BUILD_DIR/bin/windows/x64/rules/"
+cp rules/validation.yaml "$BUILD_DIR/bin/windows/x64/rules/"
 
 # 3. (Skipped as we did it per platform)
 
