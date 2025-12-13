@@ -1,9 +1,11 @@
 package indexer
 
 import (
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 
 	"k8s-lsp/pkg/config"
 
@@ -14,6 +16,7 @@ import (
 type Indexer struct {
 	Store  *Store
 	Config *config.Config
+	mu     sync.RWMutex
 }
 
 func NewIndexer(store *Store, cfg *config.Config) *Indexer {
@@ -56,7 +59,15 @@ func (i *Indexer) IndexFile(path string) bool {
 	}
 	defer f.Close()
 
-	decoder := yaml.NewDecoder(f)
+	return i.indexReader(f, path)
+}
+
+func (i *Indexer) IndexContent(path, content string) bool {
+	return i.indexReader(strings.NewReader(content), path)
+}
+
+func (i *Indexer) indexReader(r io.Reader, path string) bool {
+	decoder := yaml.NewDecoder(r)
 	indexed := false
 	for {
 		var node yaml.Node
@@ -64,7 +75,7 @@ func (i *Indexer) IndexFile(path string) bool {
 			if err.Error() == "EOF" {
 				break
 			}
-			// Log warning but continue if possible (though usually decode error stops the stream)
+			// Log warning but continue if possible
 			log.Warn().Err(err).Str("path", path).Msg("Failed to decode YAML")
 			break
 		}
@@ -103,12 +114,20 @@ func (i *Indexer) parseK8sResource(node *yaml.Node, path string) *K8sResource {
 			return nil
 		}
 
+		// Handle CRD registration
+		if kind == "CustomResourceDefinition" {
+			i.handleCRD(root)
+		}
+
 		res := &K8sResource{
 			ApiVersion: apiVersion,
 			Kind:       kind,
 			FilePath:   path,
 			Labels:     make(map[string]string),
 		}
+
+		i.mu.RLock()
+		defer i.mu.RUnlock()
 
 		i.traverse(node, []string{}, func(n *yaml.Node, p []string) {
 			// Check definitions
@@ -179,6 +198,84 @@ func (i *Indexer) parseK8sResource(node *yaml.Node, path string) *K8sResource {
 		}
 	}
 	return nil
+}
+
+func (i *Indexer) handleCRD(root *yaml.Node) {
+	// We need to find spec.names.kind
+	// root is the MappingNode of the document
+	var specNode *yaml.Node
+	for j := 0; j < len(root.Content); j += 2 {
+		if root.Content[j].Value == "spec" {
+			specNode = root.Content[j+1]
+			break
+		}
+	}
+
+	if specNode == nil || specNode.Kind != yaml.MappingNode {
+		return
+	}
+
+	var namesNode *yaml.Node
+	for j := 0; j < len(specNode.Content); j += 2 {
+		if specNode.Content[j].Value == "names" {
+			namesNode = specNode.Content[j+1]
+			break
+		}
+	}
+
+	if namesNode == nil || namesNode.Kind != yaml.MappingNode {
+		return
+	}
+
+	var kindName string
+	for j := 0; j < len(namesNode.Content); j += 2 {
+		if namesNode.Content[j].Value == "kind" {
+			kindName = namesNode.Content[j+1].Value
+			break
+		}
+	}
+
+	if kindName != "" {
+		i.registerKind(kindName)
+	}
+}
+
+func (i *Indexer) registerKind(kind string) {
+	i.mu.Lock()
+	defer i.mu.Unlock()
+
+	// Find k8s.resource.name symbol
+	for idx, sym := range i.Config.Symbols {
+		if sym.Name == "k8s.resource.name" {
+			// Check if already registered
+			for _, def := range sym.Definitions {
+				if contains(def.Kinds, kind) {
+					return // Already registered
+				}
+			}
+
+			// Add to the first definition that uses metadata.name
+			found := false
+			for dIdx, def := range sym.Definitions {
+				if def.Path == "metadata.name" {
+					i.Config.Symbols[idx].Definitions[dIdx].Kinds = append(i.Config.Symbols[idx].Definitions[dIdx].Kinds, kind)
+					log.Info().Str("kind", kind).Msg("Registered new dynamic kind from CRD")
+					found = true
+					break
+				}
+			}
+
+			if !found {
+				// Create new definition
+				i.Config.Symbols[idx].Definitions = append(i.Config.Symbols[idx].Definitions, config.SymbolDefinition{
+					Kinds: []string{kind},
+					Path:  "metadata.name",
+				})
+				log.Info().Str("kind", kind).Msg("Registered new dynamic kind from CRD (new definition)")
+			}
+			return
+		}
+	}
 }
 
 func (i *Indexer) traverse(node *yaml.Node, path []string, visitor func(*yaml.Node, []string)) {
