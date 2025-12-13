@@ -167,7 +167,7 @@ func setTrace(context *glsp.Context, params *protocol.SetTraceParams) error {
 
 func textDocumentDidOpen(context *glsp.Context, params *protocol.DidOpenTextDocumentParams) error {
 	state.Documents[params.TextDocument.URI] = params.TextDocument.Text
-	
+
 	// Index the content to support dynamic updates (e.g. new CRDs)
 	path := uriToPath(params.TextDocument.URI)
 	state.Indexer.IndexContent(path, params.TextDocument.Text)
@@ -182,7 +182,7 @@ func textDocumentDidChange(context *glsp.Context, params *protocol.DidChangeText
 		change, ok := params.ContentChanges[0].(protocol.TextDocumentContentChangeEvent)
 		if ok {
 			state.Documents[params.TextDocument.URI] = change.Text
-			
+
 			// Index the content
 			path := uriToPath(params.TextDocument.URI)
 			state.Indexer.IndexContent(path, change.Text)
@@ -193,7 +193,7 @@ func textDocumentDidChange(context *glsp.Context, params *protocol.DidChangeText
 			// In some versions it might be TextDocumentContentChangeEventWhole
 			if changeWhole, ok := params.ContentChanges[0].(protocol.TextDocumentContentChangeEventWhole); ok {
 				state.Documents[params.TextDocument.URI] = changeWhole.Text
-				
+
 				// Index the content
 				path := uriToPath(params.TextDocument.URI)
 				state.Indexer.IndexContent(path, changeWhole.Text)

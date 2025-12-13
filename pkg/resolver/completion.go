@@ -23,7 +23,7 @@ func (r *Resolver) Completion(docContent string, line, col int) ([]protocol.Comp
 		}
 
 		// Find node at cursor
-		targetNode, path := findNodeAt(&node, line+1, col+1)
+		targetNode, _, path := findNodeAt(&node, line+1, col+1)
 		if targetNode != nil {
 			log.Debug().Str("value", targetNode.Value).Strs("path", path).Msg("Found node at cursor (Completion)")
 

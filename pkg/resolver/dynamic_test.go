@@ -65,15 +65,15 @@ metadata:
 data:
   ref: target-resource
 `
-	// We don't strictly need to index the source for ResolveDefinition, 
+	// We don't strictly need to index the source for ResolveDefinition,
 	// but we need the content for the resolver.
-	
+
 	// 4. Resolve Definition
 	// "ref: target-resource" is on line 5 (0-indexed), value starts at col 7
 	// data:
 	//   ref: target-resource
 	// 01234567
-	
+
 	locs, err := res.ResolveDefinition(sourceYaml, "source.yaml", 5, 8)
 	if err != nil {
 		t.Fatalf("ResolveDefinition failed: %v", err)
@@ -90,13 +90,13 @@ data:
 			break
 		}
 	}
-	
-	// Note: The resolver might return file path or URI. 
-	// In main.go we see it handles URIs. 
-	// The store stores FilePath. 
+
+	// Note: The resolver might return file path or URI.
+	// In main.go we see it handles URIs.
+	// The store stores FilePath.
 	// Resolver.ResolveDefinition returns protocol.Location which has URI.
 	// Let's check what Resolver does.
-	
+
 	if !found {
 		// Check if it returned the correct file path at least
 		t.Logf("Found locations: %+v", locs)

@@ -34,7 +34,7 @@ func (r *Resolver) ResolveHover(docContent string, uri string, line, col int) (*
 			return nil, err
 		}
 
-		targetNode, path := findNodeAt(&node, line+1, col+1)
+		targetNode, parentNode, path := findNodeAt(&node, line+1, col+1)
 		if targetNode != nil {
 			kind := findKind(&node)
 			currentNamespace := findNamespace(&node)
@@ -44,6 +44,15 @@ func (r *Resolver) ResolveHover(docContent string, uri string, line, col int) (*
 					if refRule.Symbol == "k8s.resource.name" {
 						targetKind := refRule.TargetKind
 						ns := currentNamespace
+						// Check for sibling namespace
+						if parentNode != nil && parentNode.Kind == yaml.MappingNode {
+							for k := 0; k < len(parentNode.Content); k += 2 {
+								if parentNode.Content[k].Value == "namespace" {
+									ns = parentNode.Content[k+1].Value
+									break
+								}
+							}
+						}
 						if targetKind == "Namespace" {
 							ns = ""
 						}
@@ -82,7 +91,7 @@ func (r *Resolver) ResolveDefinition(docContent string, uri string, line, col in
 		}
 
 		// LSP is 0-based, yaml.v3 is 1-based
-		targetNode, path := findNodeAt(&node, line+1, col+1)
+		targetNode, parentNode, path := findNodeAt(&node, line+1, col+1)
 		if targetNode != nil {
 			log.Debug().Str("value", targetNode.Value).Strs("path", path).Msg("Found node at cursor")
 
@@ -127,6 +136,16 @@ func (r *Resolver) ResolveDefinition(docContent string, uri string, line, col in
 						if targetKind != "" {
 							// Namespace resource has no namespace
 							ns := currentNamespace
+							// Check for sibling namespace
+							if parentNode != nil && parentNode.Kind == yaml.MappingNode {
+								for k := 0; k < len(parentNode.Content); k += 2 {
+									if parentNode.Content[k].Value == "namespace" {
+										ns = parentNode.Content[k+1].Value
+										break
+									}
+								}
+							}
+
 							if targetKind == "Namespace" {
 								ns = "" // or "default" depending on store
 							}
@@ -172,7 +191,7 @@ func (r *Resolver) ResolveReferences(docContent string, line, col int) ([]protoc
 			return nil, err
 		}
 
-		targetNode, path := findNodeAt(&node, line+1, col+1)
+		targetNode, _, path := findNodeAt(&node, line+1, col+1)
 		if targetNode != nil {
 			log.Debug().Str("value", targetNode.Value).Strs("path", path).Msg("Found node at cursor (References)")
 
@@ -442,12 +461,12 @@ func isNamespaceRef(path []string) bool {
 
 // findNodeAt traverses the YAML AST to find the node at the given line/col.
 // It returns the node and the path of keys leading to it.
-func findNodeAt(node *yaml.Node, line, col int) (*yaml.Node, []string) {
+func findNodeAt(node *yaml.Node, line, col int) (*yaml.Node, *yaml.Node, []string) {
 	if node.Kind == yaml.DocumentNode {
 		if len(node.Content) > 0 {
 			return findNodeAt(node.Content[0], line, col)
 		}
-		return nil, nil
+		return nil, nil, nil
 	}
 
 	if node.Kind == yaml.MappingNode {
@@ -458,19 +477,19 @@ func findNodeAt(node *yaml.Node, line, col int) (*yaml.Node, []string) {
 			// Check if cursor is on the key
 			// Key is usually strict
 			if isKeyMatch(keyNode, line, col) {
-				return keyNode, []string{keyNode.Value}
+				return keyNode, node, []string{keyNode.Value}
 			}
 
 			// Check if cursor is on the value
 			// Value can be loose (rest of the line) or inside complex structure
 			if isValueMatch(valNode, line, col) {
 				if valNode.Kind == yaml.ScalarNode {
-					return valNode, []string{keyNode.Value}
+					return valNode, node, []string{keyNode.Value}
 				}
 				// Recurse
-				found, subPath := findNodeAt(valNode, line, col)
+				found, parent, subPath := findNodeAt(valNode, line, col)
 				if found != nil {
-					return found, append([]string{keyNode.Value}, subPath...)
+					return found, parent, append([]string{keyNode.Value}, subPath...)
 				}
 			} else {
 				// Fallback: if key is on the same line, and cursor is after key, and valNode is null/empty scalar on same line
@@ -479,7 +498,7 @@ func findNodeAt(node *yaml.Node, line, col int) (*yaml.Node, []string) {
 					// Check if cursor is after the key
 					keyEndCol := keyNode.Column + len(keyNode.Value)
 					if col > keyEndCol {
-						return valNode, []string{keyNode.Value}
+						return valNode, node, []string{keyNode.Value}
 					}
 				}
 			}
@@ -487,19 +506,19 @@ func findNodeAt(node *yaml.Node, line, col int) (*yaml.Node, []string) {
 	} else if node.Kind == yaml.SequenceNode {
 		for _, item := range node.Content {
 			if isValueMatch(item, line, col) {
-				found, subPath := findNodeAt(item, line, col)
+				found, parent, subPath := findNodeAt(item, line, col)
 				if found != nil {
-					return found, subPath
+					return found, parent, subPath
 				}
 			}
 		}
 	} else if node.Kind == yaml.ScalarNode {
 		if isValueMatch(node, line, col) {
-			return node, nil
+			return node, nil, nil
 		}
 	}
 
-	return nil, nil
+	return nil, nil, nil
 }
 
 func isKeyMatch(node *yaml.Node, line, col int) bool {
