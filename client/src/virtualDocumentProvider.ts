@@ -18,7 +18,6 @@ export class K8sFileSystemProvider implements vscode.FileSystemProvider {
             ctime: Date.now(),
             mtime: Date.now(),
             size: 0,
-            permissions: 0
         };
     }
 
