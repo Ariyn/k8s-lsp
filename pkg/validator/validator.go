@@ -2,6 +2,7 @@ package validator
 
 import (
 	"fmt"
+	"io"
 	"os"
 	"strings"
 
@@ -17,11 +18,13 @@ type Rule struct {
 }
 
 type Check struct {
-	Type       string `yaml:"type"`       // "reference", "required", etc.
-	Path       string `yaml:"path"`       // JSONPath-like string (e.g. spec.selector)
-	TargetKind string `yaml:"targetKind"` // For reference checks
-	TargetPath string `yaml:"targetPath"` // For reference checks
-	Message    string `yaml:"message"`
+	Type           string `yaml:"type"`           // "reference", "required", "resource-match"
+	Path           string `yaml:"path"`           // JSONPath-like string (e.g. spec.selector)
+	TargetKind     string `yaml:"targetKind"`     // For reference checks
+	TargetPath     string `yaml:"targetPath"`     // For reference checks
+	Message        string `yaml:"message"`
+	SourceProperty string `yaml:"sourceProperty"` // For resource-match
+	TargetProperty string `yaml:"targetProperty"` // For resource-match
 }
 
 type Config struct {
@@ -83,6 +86,10 @@ func (v *Validator) Validate(uri string, content string) []protocol.Diagnostic {
 					for _, check := range rule.Checks {
 						if check.Type == "reference" {
 							if diags := v.checkReference(uri, root, check, namespace); len(diags) > 0 {
+								diagnostics = append(diagnostics, diags...)
+							}
+						} else if check.Type == "resource-match" {
+							if diags := v.checkResourceMatch(uri, root, check, namespace); len(diags) > 0 {
 								diagnostics = append(diagnostics, diags...)
 							}
 						}
@@ -219,4 +226,105 @@ func (v *Validator) checkReference(uri string, root *yaml.Node, check Check, nam
 	}
 
 	return diagnostics
+}
+
+func (v *Validator) checkResourceMatch(uri string, root *yaml.Node, check Check, namespace string) []protocol.Diagnostic {
+	nodes := findNodes(root, check.Path)
+	if len(nodes) == 0 {
+		return nil
+	}
+
+	var diagnostics []protocol.Diagnostic
+
+	for _, node := range nodes {
+		if node.Kind != yaml.ScalarNode {
+			continue
+		}
+		targetName := node.Value
+
+		// Find target resource
+		// Try current namespace first, then default (for cluster-scoped like PV)
+		targetRes := v.store.Get(check.TargetKind, namespace, targetName)
+		if targetRes == nil {
+			targetRes = v.store.Get(check.TargetKind, "default", targetName)
+		}
+
+		if targetRes == nil {
+			continue // Reference not found, maybe handled by reference check
+		}
+
+		// Get Source Value
+		sourceNodes := findNodes(root, check.SourceProperty)
+		if len(sourceNodes) == 0 {
+			continue
+		}
+		sourceVal := sourceNodes[0].Value
+
+		// Get Target Value
+		targetVal := v.getValueFromResource(targetRes, check.TargetProperty)
+		if targetVal == "" {
+			continue
+		}
+
+		if sourceVal != targetVal {
+			startLine := node.Line - 1
+			startChar := node.Column - 1
+			endLine := startLine
+			endChar := startChar + len(targetName)
+
+			severity := protocol.DiagnosticSeverityWarning
+			source := "k8s-lsp"
+
+			diagnostics = append(diagnostics, protocol.Diagnostic{
+				Range: protocol.Range{
+					Start: protocol.Position{Line: uint32(startLine), Character: uint32(startChar)},
+					End:   protocol.Position{Line: uint32(endLine), Character: uint32(endChar)},
+				},
+				Severity: &severity,
+				Source:   &source,
+				Message:  fmt.Sprintf("%s: %s (%s) != %s (%s)", check.Message, check.SourceProperty, sourceVal, check.TargetProperty, targetVal),
+			})
+		}
+	}
+	return diagnostics
+}
+
+func (v *Validator) getValueFromResource(res *indexer.K8sResource, path string) string {
+	f, err := os.Open(res.FilePath)
+	if err != nil {
+		return ""
+	}
+	defer f.Close()
+
+	decoder := yaml.NewDecoder(f)
+	for {
+		var node yaml.Node
+		if err := decoder.Decode(&node); err != nil {
+			if err == io.EOF {
+				break
+			}
+			break
+		}
+		
+		if node.Kind == yaml.DocumentNode && len(node.Content) > 0 {
+			root := node.Content[0]
+			if root.Kind == yaml.MappingNode {
+				// Check if this is the right resource
+				kindNodes := findNodes(root, "kind")
+				nameNodes := findNodes(root, "metadata.name")
+				
+				if len(kindNodes) > 0 && len(nameNodes) > 0 {
+					if kindNodes[0].Value == res.Kind && nameNodes[0].Value == res.Name {
+						// Found it
+						targetNodes := findNodes(root, path)
+						if len(targetNodes) > 0 {
+							return targetNodes[0].Value
+						}
+						return ""
+					}
+				}
+			}
+		}
+	}
+	return ""
 }
