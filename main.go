@@ -1,9 +1,13 @@
 package main
 
 import (
+	"encoding/base64"
+	"encoding/json"
+	"fmt"
 	"net/url"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"k8s-lsp/pkg/config"
 	"k8s-lsp/pkg/indexer"
@@ -86,16 +90,17 @@ func main() {
 	}
 
 	handler := protocol.Handler{
-		Initialize:             initialize,
-		Initialized:            initialized,
-		Shutdown:               shutdown,
-		SetTrace:               setTrace,
-		TextDocumentDidOpen:    textDocumentDidOpen,
-		TextDocumentDidChange:  textDocumentDidChange,
-		TextDocumentDefinition: textDocumentDefinition,
-		TextDocumentReferences: textDocumentReferences,
-		TextDocumentCompletion: textDocumentCompletion,
-		TextDocumentHover:      textDocumentHover,
+		Initialize:              initialize,
+		Initialized:             initialized,
+		Shutdown:                shutdown,
+		SetTrace:                setTrace,
+		TextDocumentDidOpen:     textDocumentDidOpen,
+		TextDocumentDidChange:   textDocumentDidChange,
+		TextDocumentDefinition:  textDocumentDefinition,
+		TextDocumentReferences:  textDocumentReferences,
+		TextDocumentCompletion:  textDocumentCompletion,
+		TextDocumentHover:       textDocumentHover,
+		WorkspaceExecuteCommand: workspaceExecuteCommand,
 	}
 
 	s := server.NewServer(&handler, lsName, false)
@@ -114,6 +119,9 @@ func initialize(context *glsp.Context, params *protocol.InitializeParams) (any, 
 		ReferencesProvider: true,
 		CompletionProvider: &protocol.CompletionOptions{
 			TriggerCharacters: []string{":", " "},
+		},
+		ExecuteCommandProvider: &protocol.ExecuteCommandOptions{
+			Commands: []string{"k8s.embeddedContent", "k8s.saveEmbeddedContent"},
 		},
 	}
 
@@ -353,4 +361,174 @@ func textDocumentHover(context *glsp.Context, params *protocol.HoverParams) (*pr
 	}
 
 	return hover, nil
+}
+
+func workspaceExecuteCommand(context *glsp.Context, params *protocol.ExecuteCommandParams) (any, error) {
+	if params.Command == "k8s.embeddedContent" {
+		if len(params.Arguments) > 0 {
+			argBytes, err := json.Marshal(params.Arguments[0])
+			if err != nil {
+				return nil, err
+			}
+
+			var embeddedParams EmbeddedContentParams
+			if err := json.Unmarshal(argBytes, &embeddedParams); err != nil {
+				return nil, err
+			}
+
+			return handleEmbeddedContent(context, &embeddedParams)
+		}
+	} else if params.Command == "k8s.saveEmbeddedContent" {
+		if len(params.Arguments) > 0 {
+			argBytes, err := json.Marshal(params.Arguments[0])
+			if err != nil {
+				return nil, err
+			}
+
+			var saveParams SaveEmbeddedContentParams
+			if err := json.Unmarshal(argBytes, &saveParams); err != nil {
+				return nil, err
+			}
+
+			return handleSaveEmbeddedContent(context, &saveParams)
+		}
+	}
+	return nil, nil
+}
+
+type EmbeddedContentParams struct {
+	URI string `json:"uri"`
+}
+
+type SaveEmbeddedContentParams struct {
+	URI     string `json:"uri"`
+	Content string `json:"content"`
+}
+
+func handleSaveEmbeddedContent(context *glsp.Context, params *SaveEmbeddedContentParams) (any, error) {
+	log.Debug().Str("uri", params.URI).Msg("Received save embedded content request")
+
+	u, err := url.Parse(params.URI)
+	if err != nil {
+		return nil, err
+	}
+
+	q := u.Query()
+	sourceEncoded := q.Get("source")
+	keyEncoded := q.Get("key")
+
+	if sourceEncoded == "" || keyEncoded == "" {
+		return nil, fmt.Errorf("missing source or key in URI")
+	}
+
+	sourceBytes, err := base64.URLEncoding.DecodeString(sourceEncoded)
+	if err != nil {
+		return nil, fmt.Errorf("failed to decode source: %w", err)
+	}
+	sourceURI := string(sourceBytes)
+
+	keyBytes, err := base64.URLEncoding.DecodeString(keyEncoded)
+	if err != nil {
+		return nil, fmt.Errorf("failed to decode key: %w", err)
+	}
+	key := string(keyBytes)
+
+	content, ok := state.Documents[sourceURI]
+	if !ok {
+		parsed, err := url.Parse(sourceURI)
+		if err == nil && parsed.Scheme == "file" {
+			bytes, err := os.ReadFile(parsed.Path)
+			if err == nil {
+				content = string(bytes)
+				state.Documents[sourceURI] = content
+			}
+		}
+	}
+
+	if content == "" {
+		return nil, fmt.Errorf("document not found: %s", sourceURI)
+	}
+
+	newDocContent, err := state.Resolver.UpdateEmbeddedContent(content, key, params.Content)
+	if err != nil {
+		return nil, err
+	}
+
+	// Calculate range of the whole file
+	lines := strings.Split(content, "\n")
+	endLine := len(lines)
+	endChar := 0
+	if endLine > 0 {
+		endChar = len(lines[endLine-1])
+	}
+
+	edit := protocol.WorkspaceEdit{
+		Changes: map[string][]protocol.TextEdit{
+			sourceURI: {
+				{
+					Range: protocol.Range{
+						Start: protocol.Position{Line: 0, Character: 0},
+						End:   protocol.Position{Line: uint32(endLine), Character: uint32(endChar)},
+					},
+					NewText: newDocContent,
+				},
+			},
+		},
+	}
+
+	return edit, nil
+}
+
+func handleEmbeddedContent(context *glsp.Context, params *EmbeddedContentParams) (string, error) {
+	log.Debug().Str("uri", params.URI).Msg("Received embedded content request")
+
+	u, err := url.Parse(params.URI)
+	if err != nil {
+		return "", err
+	}
+
+	log.Debug().Str("rawQuery", u.RawQuery).Msg("Parsed URI query")
+
+	q := u.Query()
+	sourceEncoded := q.Get("source")
+	keyEncoded := q.Get("key")
+
+	log.Debug().Str("sourceEncoded", sourceEncoded).Str("keyEncoded", keyEncoded).Msg("Extracted params")
+
+	if sourceEncoded == "" || keyEncoded == "" {
+		return "", fmt.Errorf("missing source or key in URI")
+	}
+
+	sourceBytes, err := base64.URLEncoding.DecodeString(sourceEncoded)
+	if err != nil {
+		return "", fmt.Errorf("failed to decode source: %w", err)
+	}
+	sourceURI := string(sourceBytes)
+
+	keyBytes, err := base64.URLEncoding.DecodeString(keyEncoded)
+	if err != nil {
+		return "", fmt.Errorf("failed to decode key: %w", err)
+	}
+	key := string(keyBytes)
+
+	log.Debug().Str("source", sourceURI).Str("key", key).Msg("Decoded params")
+
+	content, ok := state.Documents[sourceURI]
+	if !ok {
+		// Try to read from disk
+		parsed, err := url.Parse(sourceURI)
+		if err == nil && parsed.Scheme == "file" {
+			bytes, err := os.ReadFile(parsed.Path)
+			if err == nil {
+				content = string(bytes)
+				state.Documents[sourceURI] = content
+			}
+		}
+	}
+
+	if content == "" {
+		return "", fmt.Errorf("document not found: %s", sourceURI)
+	}
+
+	return state.Resolver.ResolveEmbeddedContent(content, key)
 }

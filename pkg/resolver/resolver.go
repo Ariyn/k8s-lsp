@@ -1,6 +1,8 @@
 package resolver
 
 import (
+	"bytes"
+	"encoding/base64"
 	"fmt"
 	"io"
 	"strings"
@@ -37,6 +39,51 @@ func (r *Resolver) ResolveHover(docContent string, uri string, line, col int) (*
 		targetNode, parentNode, path := findNodeAt(&node, line+1, col+1)
 		if targetNode != nil {
 			kind := findKind(&node)
+
+			// Check for ConfigMap embedded file
+			if kind == "ConfigMap" && len(path) >= 2 && (path[len(path)-2] == "data" || path[len(path)-2] == "binaryData") {
+				var valNode *yaml.Node
+				if parentNode != nil && parentNode.Kind == yaml.MappingNode {
+					for i := 0; i < len(parentNode.Content); i += 2 {
+						if parentNode.Content[i] == targetNode {
+							if i+1 < len(parentNode.Content) {
+								valNode = parentNode.Content[i+1]
+							}
+							break
+						}
+					}
+				}
+
+				if valNode != nil && (valNode.Style == yaml.LiteralStyle || valNode.Style == yaml.FoldedStyle) {
+					if strings.Contains(targetNode.Value, ".") {
+						currentNamespace := findNamespace(&node)
+						if currentNamespace == "" {
+							currentNamespace = "default"
+						}
+						configMapName := findName(&node)
+						if configMapName == "" {
+							configMapName = "configmap"
+						}
+
+						// Use Base64 to avoid URL encoding issues with the source URI and key
+						sourceEncoded := base64.URLEncoding.EncodeToString([]byte(uri))
+						keyEncoded := base64.URLEncoding.EncodeToString([]byte(targetNode.Value))
+
+						embeddedURI := fmt.Sprintf("k8s-embedded://%s/%s/%s?source=%s&key=%s",
+							currentNamespace, configMapName, targetNode.Value, sourceEncoded, keyEncoded)
+
+						contents := fmt.Sprintf("Embedded File: **%s**\n\n[Open File](%s)", targetNode.Value, embeddedURI)
+
+						return &protocol.Hover{
+							Contents: protocol.MarkupContent{
+								Kind:  protocol.MarkupKindMarkdown,
+								Value: contents,
+							},
+						}, nil
+					}
+				}
+			}
+
 			currentNamespace := findNamespace(&node)
 
 			for _, refRule := range r.Config.References {
@@ -96,7 +143,57 @@ func (r *Resolver) ResolveDefinition(docContent string, uri string, line, col in
 			log.Debug().Str("value", targetNode.Value).Strs("path", path).Msg("Found node at cursor")
 
 			originRange := calculateOriginRange(targetNode)
+
+			// Check for ConfigMap embedded file
 			kind := findKind(&node)
+			if kind == "ConfigMap" && len(path) >= 2 && (path[len(path)-2] == "data" || path[len(path)-2] == "binaryData") {
+				// Check if targetNode is a key
+				var valNode *yaml.Node
+				if parentNode != nil && parentNode.Kind == yaml.MappingNode {
+					for i := 0; i < len(parentNode.Content); i += 2 {
+						if parentNode.Content[i] == targetNode {
+							if i+1 < len(parentNode.Content) {
+								valNode = parentNode.Content[i+1]
+							}
+							break
+						}
+					}
+				}
+
+				if valNode != nil && (valNode.Style == yaml.LiteralStyle || valNode.Style == yaml.FoldedStyle) {
+					// Check if key looks like a filename
+					if strings.Contains(targetNode.Value, ".") {
+						currentNamespace := findNamespace(&node)
+						if currentNamespace == "" {
+							currentNamespace = "default"
+						}
+						configMapName := findName(&node)
+						if configMapName == "" {
+							configMapName = "configmap"
+						}
+
+						// Use Base64 to avoid URL encoding issues with the source URI and key
+						sourceEncoded := base64.URLEncoding.EncodeToString([]byte(uri))
+						keyEncoded := base64.URLEncoding.EncodeToString([]byte(targetNode.Value))
+
+						embeddedURI := fmt.Sprintf("k8s-embedded://%s/%s/%s?source=%s&key=%s",
+							currentNamespace, configMapName, targetNode.Value, sourceEncoded, keyEncoded)
+
+						targetRange := protocol.Range{
+							Start: protocol.Position{Line: 0, Character: 0},
+							End:   protocol.Position{Line: 0, Character: 0},
+						}
+
+						return []protocol.LocationLink{{
+							OriginSelectionRange: &originRange,
+							TargetURI:            embeddedURI,
+							TargetRange:          targetRange,
+							TargetSelectionRange: targetRange,
+						}}, nil
+					}
+				}
+			}
+
 			currentNamespace := findNamespace(&node)
 
 			// Check if we are at a definition site (Symbol)
@@ -677,4 +774,85 @@ func (r *Resolver) findLabelReferences(key, value string) []protocol.Location {
 	}
 
 	return locations
+}
+
+func (r *Resolver) ResolveEmbeddedContent(docContent string, key string) (string, error) {
+	decoder := yaml.NewDecoder(strings.NewReader(docContent))
+
+	for {
+		var node yaml.Node
+		if err := decoder.Decode(&node); err != nil {
+			if err == io.EOF {
+				break
+			}
+			return "", err
+		}
+
+		if node.Kind == yaml.DocumentNode && len(node.Content) > 0 {
+			root := node.Content[0]
+			if root.Kind == yaml.MappingNode {
+				for i := 0; i < len(root.Content); i += 2 {
+					if root.Content[i].Value == "data" || root.Content[i].Value == "binaryData" {
+						dataNode := root.Content[i+1]
+						if dataNode.Kind == yaml.MappingNode {
+							for j := 0; j < len(dataNode.Content); j += 2 {
+								if dataNode.Content[j].Value == key {
+									return dataNode.Content[j+1].Value, nil
+								}
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+	return "", fmt.Errorf("key %s not found in ConfigMap data", key)
+}
+
+func (r *Resolver) UpdateEmbeddedContent(docContent string, key string, newContent string) (string, error) {
+	var node yaml.Node
+	decoder := yaml.NewDecoder(strings.NewReader(docContent))
+	if err := decoder.Decode(&node); err != nil {
+		return "", err
+	}
+
+	found := false
+	if node.Kind == yaml.DocumentNode && len(node.Content) > 0 {
+		root := node.Content[0]
+		if root.Kind == yaml.MappingNode {
+			for i := 0; i < len(root.Content); i += 2 {
+				if root.Content[i].Value == "data" || root.Content[i].Value == "binaryData" {
+					dataNode := root.Content[i+1]
+					if dataNode.Kind == yaml.MappingNode {
+						for j := 0; j < len(dataNode.Content); j += 2 {
+							if dataNode.Content[j].Value == key {
+								// Update the value
+								dataNode.Content[j+1].Value = newContent
+								// Ensure it's a block scalar for readability
+								dataNode.Content[j+1].Style = yaml.LiteralStyle
+								found = true
+								break
+							}
+						}
+					}
+				}
+				if found {
+					break
+				}
+			}
+		}
+	}
+
+	if !found {
+		return "", fmt.Errorf("key %s not found in ConfigMap data", key)
+	}
+
+	var buf bytes.Buffer
+	encoder := yaml.NewEncoder(&buf)
+	encoder.SetIndent(2)
+	if err := encoder.Encode(&node); err != nil {
+		return "", err
+	}
+
+	return buf.String(), nil
 }

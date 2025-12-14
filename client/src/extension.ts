@@ -9,6 +9,7 @@ import {
   ServerOptions,
   TransportKind
 } from 'vscode-languageclient/node';
+import { K8sFileSystemProvider } from './virtualDocumentProvider';
 
 let client: LanguageClient;
 
@@ -78,6 +79,13 @@ export function activate(context: ExtensionContext) {
   try {
     client
       .start()
+      .then(() => {
+        const provider = new K8sFileSystemProvider(client);
+        context.subscriptions.push(workspace.registerFileSystemProvider('k8s-embedded', provider, {
+          isCaseSensitive: true,
+          isReadonly: false
+        }));
+      })
       .catch((err) => {
         outputChannel.appendLine(`Failed to start language client: ${String(err)}`);
         outputChannel.show(true);
