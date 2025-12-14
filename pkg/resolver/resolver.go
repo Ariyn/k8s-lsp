@@ -824,10 +824,22 @@ func (r *Resolver) UpdateEmbeddedContent(docContent string, key string, newConte
 				if root.Content[i].Value == "data" || root.Content[i].Value == "binaryData" {
 					dataNode := root.Content[i+1]
 					if dataNode.Kind == yaml.MappingNode {
+						// Ensure data map is in block style so block scalars can be used
+						dataNode.Style = 0
 						for j := 0; j < len(dataNode.Content); j += 2 {
 							if dataNode.Content[j].Value == key {
 								// Update the value
-								dataNode.Content[j+1].Value = newContent
+								// Normalize line endings to \n to ensure block scalar style is used
+								normalized := strings.ReplaceAll(newContent, "\r\n", "\n")
+
+								// Remove trailing spaces from each line to prevent yaml.v3 from forcing quotes
+								lines := strings.Split(normalized, "\n")
+								for k, line := range lines {
+									lines[k] = strings.TrimRight(line, " \t")
+								}
+								normalized = strings.Join(lines, "\n")
+
+								dataNode.Content[j+1].Value = strings.TrimSuffix(normalized, "\n")
 								// Ensure it's a block scalar for readability
 								dataNode.Content[j+1].Style = yaml.LiteralStyle
 								found = true
@@ -847,12 +859,17 @@ func (r *Resolver) UpdateEmbeddedContent(docContent string, key string, newConte
 		return "", fmt.Errorf("key %s not found in ConfigMap data", key)
 	}
 
+	log.Info().Str("key", key).Str("buf", fmt.Sprintf("%v", node)).Msg("Updated embedded content in ConfigMap")
+
 	var buf bytes.Buffer
 	encoder := yaml.NewEncoder(&buf)
 	encoder.SetIndent(2)
+	defer encoder.Close()
 	if err := encoder.Encode(&node); err != nil {
 		return "", err
 	}
+
+	log.Info().Str("buf", buf.String()).Msg("Serialized updated ConfigMap content")
 
 	return buf.String(), nil
 }

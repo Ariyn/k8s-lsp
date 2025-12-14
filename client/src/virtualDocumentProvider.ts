@@ -42,7 +42,10 @@ export class K8sFileSystemProvider implements vscode.FileSystemProvider {
     }
 
     async writeFile(uri: vscode.Uri, content: Uint8Array, options: { create: boolean; overwrite: boolean; }): Promise<void> {
-        const strContent = new TextDecoder().decode(content);
+        let strContent = new TextDecoder().decode(content);
+        // Normalize CRLF to LF to ensure consistent behavior across platforms
+        strContent = strContent.replace(/\r\n/g, '\n');
+
         try {
             const edit = await this.client.sendRequest<any>('workspace/executeCommand', {
                 command: 'k8s.saveEmbeddedContent',
@@ -51,6 +54,7 @@ export class K8sFileSystemProvider implements vscode.FileSystemProvider {
             
             if (edit) {
                 const wsEdit = await this.client.protocol2CodeConverter.asWorkspaceEdit(edit);
+                console.log("EDITED!!!", wsEdit)
                 if (wsEdit) {
                     await vscode.workspace.applyEdit(wsEdit);
                 }

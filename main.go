@@ -39,12 +39,13 @@ var state *ServerState
 func main() {
 	// Configure logging to file and stderr
 	logFile, err := os.OpenFile(getLogFilePath(), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	consoleWriter := zerolog.ConsoleWriter{Out: os.Stderr, NoColor: true}
 	if err != nil {
 		// Fallback to stderr if file fails
-		log.Logger = log.Output(zerolog.ConsoleWriter{Out: os.Stderr})
+		log.Logger = log.Output(consoleWriter)
 		log.Error().Err(err).Msg("Failed to open log file")
 	} else {
-		multi := zerolog.MultiLevelWriter(zerolog.ConsoleWriter{Out: os.Stderr}, logFile)
+		multi := zerolog.MultiLevelWriter(consoleWriter, logFile)
 		log.Logger = log.Output(multi)
 	}
 
@@ -90,17 +91,19 @@ func main() {
 	}
 
 	handler := protocol.Handler{
-		Initialize:              initialize,
-		Initialized:             initialized,
-		Shutdown:                shutdown,
-		SetTrace:                setTrace,
-		TextDocumentDidOpen:     textDocumentDidOpen,
-		TextDocumentDidChange:   textDocumentDidChange,
-		TextDocumentDefinition:  textDocumentDefinition,
-		TextDocumentReferences:  textDocumentReferences,
-		TextDocumentCompletion:  textDocumentCompletion,
-		TextDocumentHover:       textDocumentHover,
-		WorkspaceExecuteCommand: workspaceExecuteCommand,
+		Initialize:                     initialize,
+		Initialized:                    initialized,
+		Shutdown:                       shutdown,
+		SetTrace:                       setTrace,
+		TextDocumentDidOpen:            textDocumentDidOpen,
+		TextDocumentDidChange:          textDocumentDidChange,
+		TextDocumentDefinition:         textDocumentDefinition,
+		TextDocumentReferences:         textDocumentReferences,
+		TextDocumentCompletion:         textDocumentCompletion,
+		TextDocumentHover:              textDocumentHover,
+		TextDocumentDidSave:            textDocumentDidSave,
+		WorkspaceDidChangeWatchedFiles: workspaceDidChangeWatchedFiles,
+		WorkspaceExecuteCommand:        workspaceExecuteCommand,
 	}
 
 	s := server.NewServer(&handler, lsName, false)
@@ -209,6 +212,23 @@ func textDocumentDidChange(context *glsp.Context, params *protocol.DidChangeText
 				go publishDiagnostics(context, params.TextDocument.URI, changeWhole.Text)
 			}
 		}
+	}
+	return nil
+}
+
+func textDocumentDidSave(context *glsp.Context, params *protocol.DidSaveTextDocumentParams) error {
+	log.Debug().Str("uri", params.TextDocument.URI).Msg("Document saved")
+	return nil
+}
+
+func workspaceDidChangeWatchedFiles(context *glsp.Context, params *protocol.DidChangeWatchedFilesParams) error {
+	for _, change := range params.Changes {
+		log.Debug().Str("uri", change.URI).Int("type", int(change.Type)).Msg("Watched file changed")
+		// TODO: Handle file events (Created, Changed, Deleted)
+		// For now, we just log.
+		// If we wanted to be correct, we should:
+		// 1. If Created/Changed: IndexFile(uriToPath(change.URI))
+		// 2. If Deleted: Remove resources from store (requires Store update to track by file)
 	}
 	return nil
 }
@@ -448,6 +468,8 @@ func handleSaveEmbeddedContent(context *glsp.Context, params *SaveEmbeddedConten
 	if content == "" {
 		return nil, fmt.Errorf("document not found: %s", sourceURI)
 	}
+
+	log.Info().Str("source", sourceURI).Str("key", key).Str("content", params.Content).Msg("Saving embedded content")
 
 	newDocContent, err := state.Resolver.UpdateEmbeddedContent(content, key, params.Content)
 	if err != nil {
