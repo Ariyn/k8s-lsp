@@ -46,6 +46,8 @@ jobs:
       run: |
         mkdir -p output
         go build -o output/k8s-lsp${{ matrix.os == 'windows' && '.exe' || '' }} .
+        # Ensure executable bit is set for Unix targets (artifacts/packaging can drop mode bits).
+        if [ "${{ matrix.os }}" != "windows" ]; then chmod +x output/k8s-lsp; fi
         mkdir -p output/rules
         cp rules/k8s.yaml output/rules/
         cp rules/validation.yaml output/rules/
@@ -105,6 +107,12 @@ jobs:
         
         # Verify structure
         ls -R build/bin
+
+        # Ensure packaged server binaries are executable on Unix platforms
+        chmod -R a+rX build/bin
+        if [ -f build/bin/linux/x64/k8s-lsp ]; then chmod +x build/bin/linux/x64/k8s-lsp; fi
+        if [ -f build/bin/darwin/x64/k8s-lsp ]; then chmod +x build/bin/darwin/x64/k8s-lsp; fi
+        if [ -f build/bin/darwin/arm64/k8s-lsp ]; then chmod +x build/bin/darwin/arm64/k8s-lsp; fi
         
         # Build extension
         cd build

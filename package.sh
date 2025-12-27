@@ -67,6 +67,16 @@ npm install
 # Compile TypeScript
 npm run compile
 
+# Ensure packaged server binaries are executable on Unix platforms.
+# Some build environments can drop mode bits during intermediate steps;
+# re-applying here makes the VSIX as correct as possible.
+if [ -d "$BUILD_DIR/bin" ]; then
+    chmod -R a+rX "$BUILD_DIR/bin"
+    if [ -f "$BUILD_DIR/bin/linux/x64/k8s-lsp" ]; then chmod +x "$BUILD_DIR/bin/linux/x64/k8s-lsp"; fi
+    if [ -f "$BUILD_DIR/bin/darwin/x64/k8s-lsp" ]; then chmod +x "$BUILD_DIR/bin/darwin/x64/k8s-lsp"; fi
+    if [ -f "$BUILD_DIR/bin/darwin/arm64/k8s-lsp" ]; then chmod +x "$BUILD_DIR/bin/darwin/arm64/k8s-lsp"; fi
+fi
+
 # Package into VSIX
 npx vsce package -o "$OUTPUT_PATH"
 
