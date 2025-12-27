@@ -4,6 +4,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 
@@ -193,11 +194,233 @@ func (i *Indexer) parseK8sResource(node *yaml.Node, path string) *K8sResource {
 			}
 		})
 
+		// Special-case indexing for ConfigMap usages that require sibling context
+		// (e.g. configMapKeyRef.name + configMapKeyRef.key).
+		// This is intentionally not driven by rules because we need to correlate fields.
+		res.References = append(res.References, extractConfigMapReferences(root, kind, normalizeNamespace(res.Namespace))...)
+		res.References = dedupeReferences(res.References)
+
 		if res.Name != "" {
 			return res
 		}
 	}
 	return nil
+}
+
+func normalizeNamespace(ns string) string {
+	if ns == "" {
+		return "default"
+	}
+	return ns
+}
+
+func extractConfigMapReferences(root *yaml.Node, kind string, resourceNamespace string) []Reference {
+	// Only pod-spec-bearing resources can reference ConfigMaps this way.
+	if !(kind == "Pod" || kind == "Deployment" || kind == "StatefulSet" || kind == "DaemonSet" || kind == "Job" || kind == "CronJob") {
+		return nil
+	}
+
+	podSpec := findPodSpecNode(root, kind)
+	if podSpec == nil {
+		return nil
+	}
+
+	var refs []Reference
+
+	// volumes[].configMap.name + volumes[].configMap.items[].key
+	for _, vol := range findVolumes(podSpec) {
+		cm := getMapValue(vol, "configMap")
+		cmNameNode := getMapValue(cm, "name")
+		if cmNameNode != nil && cmNameNode.Kind == yaml.ScalarNode {
+			refs = append(refs, Reference{
+				Kind:      "ConfigMap",
+				Name:      cmNameNode.Value,
+				Namespace: resourceNamespace,
+				Line:      cmNameNode.Line - 1,
+				Col:       cmNameNode.Column - 1,
+			})
+
+			items := getMapValue(cm, "items")
+			for _, item := range asSequence(items) {
+				keyNode := getMapValue(item, "key")
+				if keyNode != nil && keyNode.Kind == yaml.ScalarNode {
+					refs = append(refs, Reference{
+						Kind:      "ConfigMap",
+						Name:      cmNameNode.Value,
+						Key:       keyNode.Value,
+						Namespace: resourceNamespace,
+						Line:      keyNode.Line - 1,
+						Col:       keyNode.Column - 1,
+					})
+				}
+			}
+		}
+
+		// volumes[].projected.sources[].configMap.{name,items[].key}
+		projected := getMapValue(vol, "projected")
+		sources := getMapValue(projected, "sources")
+		for _, src := range asSequence(sources) {
+			cm2 := getMapValue(src, "configMap")
+			cm2NameNode := getMapValue(cm2, "name")
+			if cm2NameNode != nil && cm2NameNode.Kind == yaml.ScalarNode {
+				refs = append(refs, Reference{
+					Kind:      "ConfigMap",
+					Name:      cm2NameNode.Value,
+					Namespace: resourceNamespace,
+					Line:      cm2NameNode.Line - 1,
+					Col:       cm2NameNode.Column - 1,
+				})
+
+				items := getMapValue(cm2, "items")
+				for _, item := range asSequence(items) {
+					keyNode := getMapValue(item, "key")
+					if keyNode != nil && keyNode.Kind == yaml.ScalarNode {
+						refs = append(refs, Reference{
+							Kind:      "ConfigMap",
+							Name:      cm2NameNode.Value,
+							Key:       keyNode.Value,
+							Namespace: resourceNamespace,
+							Line:      keyNode.Line - 1,
+							Col:       keyNode.Column - 1,
+						})
+					}
+				}
+			}
+		}
+	}
+
+	// containers[].envFrom[].configMapRef.name (whole ConfigMap)
+	for _, container := range findContainers(podSpec) {
+		envFrom := getMapValue(container, "envFrom")
+		for _, envFromItem := range asSequence(envFrom) {
+			cmRef := getMapValue(envFromItem, "configMapRef")
+			nameNode := getMapValue(cmRef, "name")
+			if nameNode != nil && nameNode.Kind == yaml.ScalarNode {
+				refs = append(refs, Reference{
+					Kind:      "ConfigMap",
+					Name:      nameNode.Value,
+					Namespace: resourceNamespace,
+					Line:      nameNode.Line - 1,
+					Col:       nameNode.Column - 1,
+				})
+			}
+		}
+
+		// containers[].env[].valueFrom.configMapKeyRef.{name,key}
+		env := getMapValue(container, "env")
+		for _, envItem := range asSequence(env) {
+			valueFrom := getMapValue(envItem, "valueFrom")
+			cmKeyRef := getMapValue(valueFrom, "configMapKeyRef")
+			nameNode := getMapValue(cmKeyRef, "name")
+			keyNode := getMapValue(cmKeyRef, "key")
+			if nameNode != nil && nameNode.Kind == yaml.ScalarNode {
+				refs = append(refs, Reference{
+					Kind:      "ConfigMap",
+					Name:      nameNode.Value,
+					Namespace: resourceNamespace,
+					Line:      nameNode.Line - 1,
+					Col:       nameNode.Column - 1,
+				})
+			}
+			if nameNode != nil && nameNode.Kind == yaml.ScalarNode && keyNode != nil && keyNode.Kind == yaml.ScalarNode {
+				refs = append(refs, Reference{
+					Kind:      "ConfigMap",
+					Name:      nameNode.Value,
+					Key:       keyNode.Value,
+					Namespace: resourceNamespace,
+					Line:      keyNode.Line - 1,
+					Col:       keyNode.Column - 1,
+				})
+			}
+		}
+	}
+
+	return refs
+}
+
+func dedupeReferences(refs []Reference) []Reference {
+	seen := make(map[string]struct{}, len(refs))
+	out := make([]Reference, 0, len(refs))
+	for _, r := range refs {
+		k := r.Kind + "|" + r.Namespace + "|" + r.Name + "|" + r.Key + "|" + r.Symbol + "|" + fmtInt(r.Line) + "|" + fmtInt(r.Col)
+		if _, ok := seen[k]; ok {
+			continue
+		}
+		seen[k] = struct{}{}
+		out = append(out, r)
+	}
+	return out
+}
+
+func fmtInt(v int) string {
+	// avoid importing fmt just for Sprintf
+	return strconv.Itoa(v)
+}
+
+func findPodSpecNode(root *yaml.Node, kind string) *yaml.Node {
+	// root is the MappingNode of the document
+	get := func(n *yaml.Node, key string) *yaml.Node {
+		return getMapValue(n, key)
+	}
+
+	spec := get(root, "spec")
+	if spec == nil {
+		return nil
+	}
+
+	if kind == "Pod" {
+		return spec
+	}
+
+	if kind == "Deployment" || kind == "DaemonSet" || kind == "StatefulSet" || kind == "Job" {
+		tmpl := get(spec, "template")
+		return get(tmpl, "spec")
+	}
+
+	if kind == "CronJob" {
+		jt := get(spec, "jobTemplate")
+		jtSpec := get(jt, "spec")
+		tmpl := get(jtSpec, "template")
+		return get(tmpl, "spec")
+	}
+
+	// Fallback: spec.template.spec
+	tmpl := get(spec, "template")
+	if tmpl != nil {
+		if ps := get(tmpl, "spec"); ps != nil {
+			return ps
+		}
+	}
+	return nil
+}
+
+func getMapValue(n *yaml.Node, key string) *yaml.Node {
+	if n == nil || n.Kind != yaml.MappingNode {
+		return nil
+	}
+	for i := 0; i < len(n.Content); i += 2 {
+		if n.Content[i].Value == key {
+			return n.Content[i+1]
+		}
+	}
+	return nil
+}
+
+func asSequence(n *yaml.Node) []*yaml.Node {
+	if n == nil || n.Kind != yaml.SequenceNode {
+		return nil
+	}
+	return n.Content
+}
+
+func findVolumes(podSpec *yaml.Node) []*yaml.Node {
+	vols := getMapValue(podSpec, "volumes")
+	return asSequence(vols)
+}
+
+func findContainers(podSpec *yaml.Node) []*yaml.Node {
+	containers := getMapValue(podSpec, "containers")
+	return asSequence(containers)
 }
 
 func (i *Indexer) handleCRD(root *yaml.Node) {

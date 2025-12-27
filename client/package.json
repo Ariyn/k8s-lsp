@@ -18,6 +18,16 @@
   ],
   "main": "./out/extension.js",
   "contributes": {
+    "commands": [
+      {
+        "command": "k8sLsp.openEmbeddedFile",
+        "title": "Kubernetes LSP: Open Embedded File"
+      },
+      {
+        "command": "k8sLsp.findEmbeddedFileUsages",
+        "title": "Kubernetes LSP: Find Embedded File Usages"
+      }
+    ],
     "languages": [
       {
         "id": "yaml",

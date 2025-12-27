@@ -1,6 +1,6 @@
 import * as fs from 'fs';
 import * as path from 'path';
-import { ExtensionContext, window, workspace } from 'vscode';
+import { ExtensionContext, Uri, Position, commands, window, workspace, MarkdownString, Hover } from 'vscode';
 
 import {
   LanguageClient,
@@ -65,6 +65,35 @@ export function activate(context: ExtensionContext) {
     },
     outputChannel,
     revealOutputChannelOn: RevealOutputChannelOn.Error,
+    middleware: {
+      provideHover: async (document, position, token, next) => {
+        const hover = (await next(document, position, token)) as Hover | null | undefined;
+        if (!hover) {
+          return hover;
+        }
+
+        const enableCommands = new Set([
+          'k8sLsp.openEmbeddedFile',
+          'k8sLsp.findEmbeddedFileUsages'
+        ]);
+
+        const trustMarkdown = (value: unknown) => {
+          if (value instanceof MarkdownString) {
+            value.isTrusted = { enabledCommands: Array.from(enableCommands) };
+          }
+        };
+
+        if (Array.isArray(hover.contents)) {
+          for (const c of hover.contents) {
+            trustMarkdown(c);
+          }
+        } else {
+          trustMarkdown(hover.contents);
+        }
+
+        return hover;
+      }
+    }
   };
 
   // Create the language client and start the client.
@@ -85,6 +114,50 @@ export function activate(context: ExtensionContext) {
           isCaseSensitive: true,
           isReadonly: false
         }));
+
+        context.subscriptions.push(
+          commands.registerCommand('k8sLsp.openEmbeddedFile', async (args: any) => {
+            const uriStr = typeof args === 'string' ? args : args?.uri;
+            if (!uriStr) {
+              return;
+            }
+            const uri = Uri.parse(uriStr);
+            const doc = await workspace.openTextDocument(uri);
+            await window.showTextDocument(doc, { preview: false });
+          })
+        );
+
+        context.subscriptions.push(
+          commands.registerCommand('k8sLsp.findEmbeddedFileUsages', async (args: any) => {
+            const uriStr = args?.uri as string | undefined;
+            const pos = args?.position as { line: number; character: number } | undefined;
+            if (!uriStr || !pos) {
+              return;
+            }
+
+            const uri = Uri.parse(uriStr);
+            const position = new Position(pos.line, pos.character);
+
+            // Ask the LSP server for references at the given position.
+            const lspLocations = await client.sendRequest<any[]>('textDocument/references', {
+              textDocument: { uri: uriStr },
+              position: { line: pos.line, character: pos.character },
+              context: { includeDeclaration: false }
+            });
+
+            const vscodeLocations = [] as any[];
+            if (Array.isArray(lspLocations)) {
+              for (const loc of lspLocations) {
+                const converted = await client.protocol2CodeConverter.asLocation(loc);
+                if (converted) {
+                  vscodeLocations.push(converted);
+                }
+              }
+            }
+
+            await commands.executeCommand('editor.action.showReferences', uri, position, vscodeLocations);
+          })
+        );
       })
       .catch((err) => {
         outputChannel.appendLine(`Failed to start language client: ${String(err)}`);

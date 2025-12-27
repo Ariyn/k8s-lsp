@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"fmt"
 	"io"
+	"net/url"
 	"strings"
 
 	"k8s-lsp/pkg/config"
@@ -72,7 +73,18 @@ func (r *Resolver) ResolveHover(docContent string, uri string, line, col int) (*
 						embeddedURI := fmt.Sprintf("k8s-embedded://%s/%s/%s?source=%s&key=%s",
 							currentNamespace, configMapName, targetNode.Value, sourceEncoded, keyEncoded)
 
-						contents := fmt.Sprintf("Embedded File: **%s**\n\n[Open File](%s)", targetNode.Value, embeddedURI)
+						openArgs := fmt.Sprintf(`{"uri":%q}`, embeddedURI)
+						openLink := "command:k8sLsp.openEmbeddedFile?" + url.QueryEscape(openArgs)
+
+						findArgs := fmt.Sprintf(`{"uri":%q,"position":{"line":%d,"character":%d}}`, uri, line, col)
+						findLink := "command:k8sLsp.findEmbeddedFileUsages?" + url.QueryEscape(findArgs)
+
+						contents := fmt.Sprintf(
+							"Embedded File: **%s**\n\n[Open File](%s) · [Find Usages](%s)",
+							targetNode.Value,
+							openLink,
+							findLink,
+						)
 
 						return &protocol.Hover{
 							Contents: protocol.MarkupContent{
@@ -303,9 +315,39 @@ func (r *Resolver) ResolveReferences(docContent string, uri string, line, col in
 			return nil, err
 		}
 
-		targetNode, _, path := findNodeAt(&node, line+1, col+1)
+		targetNode, parentNode, path := findNodeAt(&node, line+1, col+1)
 		if targetNode != nil {
 			log.Debug().Str("value", targetNode.Value).Strs("path", path).Msg("Found node at cursor (References)")
+
+			// Special case: ConfigMap embedded file (data/binaryData key)
+			// Shift+F12 should return all usages (mounts/refs), not the virtual file.
+			kind := findKind(&node)
+			if kind == "ConfigMap" && len(path) >= 2 && (path[len(path)-2] == "data" || path[len(path)-2] == "binaryData") {
+				var valNode *yaml.Node
+				if parentNode != nil && parentNode.Kind == yaml.MappingNode {
+					for i := 0; i < len(parentNode.Content); i += 2 {
+						if parentNode.Content[i] == targetNode {
+							if i+1 < len(parentNode.Content) {
+								valNode = parentNode.Content[i+1]
+							}
+							break
+						}
+					}
+				}
+
+				if valNode != nil && (valNode.Style == yaml.LiteralStyle || valNode.Style == yaml.FoldedStyle) && strings.Contains(targetNode.Value, ".") {
+					ns := findNamespace(&node)
+					if ns == "" {
+						ns = "default"
+					}
+					cmName := findName(&node)
+					if cmName == "" {
+						cmName = "configmap"
+					}
+
+					return r.findConfigMapEmbeddedFileUsages(ns, cmName, targetNode.Value), nil
+				}
+			}
 
 			// Special case: within a workload (Deployment/DaemonSet/etc), map
 			// spec.template.spec.volumes[].persistentVolumeClaim.claimName ->
@@ -349,7 +391,7 @@ func (r *Resolver) ResolveReferences(docContent string, uri string, line, col in
 			}
 
 			// Check configured references
-			kind := findKind(&node)
+			kind = findKind(&node)
 
 			// Check if we are at a definition site (Symbol)
 			for _, sym := range r.Config.Symbols {
@@ -400,6 +442,46 @@ func (r *Resolver) ResolveReferences(docContent string, uri string, line, col in
 		}
 	}
 	return nil, nil
+}
+
+func (r *Resolver) findConfigMapEmbeddedFileUsages(namespace, configMapName, key string) []protocol.Location {
+	var locations []protocol.Location
+	if namespace == "" {
+		namespace = "default"
+	}
+
+	resources := r.Store.FindReferences("ConfigMap", configMapName)
+	for _, res := range resources {
+		resNS := res.Namespace
+		if resNS == "" {
+			resNS = "default"
+		}
+		if resNS != namespace {
+			continue
+		}
+
+		for _, ref := range res.References {
+			if ref.Kind != "ConfigMap" || ref.Name != configMapName {
+				continue
+			}
+			if ref.Key != "" && ref.Key != key {
+				continue
+			}
+
+			display := ref.Name
+			if ref.Key != "" {
+				display = ref.Key
+			}
+			locations = append(locations, protocol.Location{
+				URI: "file://" + res.FilePath,
+				Range: protocol.Range{
+					Start: protocol.Position{Line: uint32(ref.Line), Character: uint32(ref.Col)},
+					End:   protocol.Position{Line: uint32(ref.Line), Character: uint32(ref.Col + len(display))},
+				},
+			})
+		}
+	}
+	return locations
 }
 
 func isWorkloadPVCClaimNamePath(path []string) bool {

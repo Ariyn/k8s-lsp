@@ -9,6 +9,7 @@ import (
 type Reference struct {
 	Kind      string // Optional, if known
 	Name      string // The value of the reference
+	Key       string // Optional sub-key (e.g. ConfigMap data key)
 	Namespace string // Optional
 	Symbol    string // The symbol name (e.g. "k8s.resource.name")
 	Line      int
