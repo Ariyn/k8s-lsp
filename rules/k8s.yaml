@@ -6,7 +6,7 @@ symbols:
     definitions:
       - kinds: ["Deployment", "StatefulSet", "DaemonSet", "Job", "CronJob", "Pod"]
         path: "metadata.name"
-      - kinds: ["Service", "Ingress", "ConfigMap", "Secret", "PersistentVolumeClaim", "Namespace", "ServiceAccount", "Role", "ClusterRole"]
+      - kinds: ["Service", "Ingress", "ConfigMap", "Secret", "PersistentVolumeClaim", "PersistentVolume", "Namespace", "ServiceAccount", "Role", "ClusterRole"]
         path: "metadata.name"
 
   - name: k8s.label
@@ -106,3 +106,10 @@ references:
     match:
       kinds: ["Deployment", "StatefulSet", "DaemonSet", "Job"]
       path: "spec.template.spec.volumes[].persistentVolumeClaim.claimName"
+
+  - name: pvc.volumeName.pv
+    symbol: k8s.resource.name
+    targetKind: PersistentVolume
+    match:
+      kinds: ["PersistentVolumeClaim"]
+      path: "spec.volumeName"

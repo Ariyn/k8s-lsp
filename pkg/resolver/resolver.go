@@ -105,6 +105,10 @@ func (r *Resolver) ResolveHover(docContent string, uri string, line, col int) (*
 						}
 
 						res := r.Store.Get(targetKind, ns, targetNode.Value)
+						if res == nil && targetKind != "Namespace" && ns != "default" {
+							// Store treats empty/cluster-scoped namespaces as "default".
+							res = r.Store.Get(targetKind, "default", targetNode.Value)
+						}
 						if res != nil {
 							contents := fmt.Sprintf("**%s**\n\nKind: %s\nNamespace: %s\nFile: %s",
 								res.Name, res.Kind, res.Namespace, res.FilePath)
@@ -256,6 +260,10 @@ func (r *Resolver) ResolveDefinition(docContent string, uri string, line, col in
 
 							log.Debug().Str("kind", targetKind).Str("ns", ns).Str("name", targetNode.Value).Msg("Looking up definition")
 							res := r.Store.Get(targetKind, ns, targetNode.Value)
+							if res == nil && targetKind != "Namespace" && ns != "default" {
+								// Store treats empty/cluster-scoped namespaces as "default".
+								res = r.Store.Get(targetKind, "default", targetNode.Value)
+							}
 							if res != nil {
 								targetRange := protocol.Range{
 									Start: protocol.Position{Line: uint32(res.Line), Character: uint32(res.Col)},

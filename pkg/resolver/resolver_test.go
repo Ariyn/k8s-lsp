@@ -143,6 +143,60 @@ spec:
 	}
 }
 
+func TestResolveDefinition_PVCVolumeName_ToPV(t *testing.T) {
+	cfg := &config.Config{
+		References: []config.Reference{
+			{
+				Name:       "pvc.volumeName.pv",
+				Symbol:     "k8s.resource.name",
+				TargetKind: "PersistentVolume",
+				Match: config.ReferenceMatch{
+					Kinds: []string{"PersistentVolumeClaim"},
+					Path:  "spec.volumeName",
+				},
+			},
+		},
+	}
+
+	store := indexer.NewStore()
+	store.Add(&indexer.K8sResource{
+		Kind:     "PersistentVolume",
+		Name:     "pv-test",
+		// PV is cluster-scoped; Store will map empty namespace to "default".
+		Namespace: "",
+		FilePath:  "/tmp/pv.yaml",
+		Line:      3,
+		Col:       8,
+	})
+
+	r := NewResolver(store, cfg)
+
+	yamlContent := `
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: pvc-test
+  namespace: dev
+spec:
+  volumeName: pv-test
+`
+
+	// Line 7 is "  volumeName: pv-test" (because of leading newline)
+	line := 7
+	col := 15
+
+	locs, err := r.ResolveDefinition(yamlContent, "file:///tmp/pvc.yaml", line, col)
+	if err != nil {
+		t.Fatalf("ResolveDefinition failed: %v", err)
+	}
+	if len(locs) != 1 {
+		t.Fatalf("Expected 1 location, got %d", len(locs))
+	}
+	if locs[0].TargetURI != "file:///tmp/pv.yaml" {
+		t.Errorf("Expected TargetURI file:///tmp/pv.yaml, got %s", locs[0].TargetURI)
+	}
+}
+
 func TestResolveReferences(t *testing.T) {
 	// 1. Setup Config
 	cfg := &config.Config{
