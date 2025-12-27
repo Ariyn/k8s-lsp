@@ -1,10 +1,13 @@
 package resolver
 
 import (
+	"strings"
 	"testing"
 
 	"k8s-lsp/pkg/config"
 	"k8s-lsp/pkg/indexer"
+
+	"gopkg.in/yaml.v3"
 )
 
 func TestResolveDefinition(t *testing.T) {
@@ -270,7 +273,7 @@ spec:
 	col := 8
 
 	// 5. Call ResolveReferences
-	locs, err := r.ResolveReferences(yamlContent, line, col)
+	locs, err := r.ResolveReferences(yamlContent, "file:///tmp/service.yaml", line, col)
 
 	// 6. Assertions
 	if err != nil {
@@ -371,7 +374,7 @@ spec:
 	col := 9
 
 	// 5. Call ResolveReferences
-	locs, err := r.ResolveReferences(yamlContent, line, col)
+	locs, err := r.ResolveReferences(yamlContent, "file:///tmp/pod.yaml", line, col)
 
 	// 6. Assertions
 	if err != nil {
@@ -400,6 +403,296 @@ spec:
 	if locs[0].URI != "file:///tmp/service.yaml" {
 		t.Errorf("Expected URI file:///tmp/service.yaml, got %s", locs[0].URI)
 	}
+}
+
+func TestResolveReferences_WorkloadPVCClaimName_ShowsVolumeMountUsages_Deployment(t *testing.T) {
+	uri := "file:///tmp/deployment.yaml"
+	yamlContent := strings.TrimLeft(`
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: demo
+spec:
+  template:
+    spec:
+      volumes:
+      - name: data
+        persistentVolumeClaim:
+          claimName: mypvc
+      containers:
+      - name: app
+        image: nginx
+        volumeMounts:
+        - name: data
+          mountPath: /data
+      - name: sidecar
+        image: busybox
+        volumeMounts:
+        - name: data
+          mountPath: /data2
+`, "\n")
+
+	assertWorkloadPVCClaimNameReferences(t, uri, yamlContent)
+}
+
+func TestResolveReferences_WorkloadPVCClaimName_ShowsVolumeMountUsages_DaemonSet(t *testing.T) {
+	uri := "file:///tmp/daemonset.yaml"
+	yamlContent := strings.TrimLeft(`
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: demo
+spec:
+  template:
+    spec:
+      volumes:
+      - name: data
+        persistentVolumeClaim:
+          claimName: mypvc
+      containers:
+      - name: app
+        image: nginx
+        volumeMounts:
+        - name: data
+          mountPath: /data
+      - name: sidecar
+        image: busybox
+        volumeMounts:
+        - name: data
+          mountPath: /data2
+`, "\n")
+
+	assertWorkloadPVCClaimNameReferences(t, uri, yamlContent)
+}
+
+func TestResolveReferences_WorkloadPVCClaimName_ShowsVolumeMountUsages_StatefulSet(t *testing.T) {
+	uri := "file:///tmp/statefulset.yaml"
+	yamlContent := strings.TrimLeft(`
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: demo
+spec:
+  serviceName: demo
+  selector:
+    matchLabels:
+      app: demo
+  template:
+    metadata:
+      labels:
+        app: demo
+    spec:
+      volumes:
+      - name: data
+        persistentVolumeClaim:
+          claimName: mypvc
+      containers:
+      - name: app
+        image: nginx
+        volumeMounts:
+        - name: data
+          mountPath: /data
+      - name: sidecar
+        image: busybox
+        volumeMounts:
+        - name: data
+          mountPath: /data2
+`, "\n")
+
+	assertWorkloadPVCClaimNameReferences(t, uri, yamlContent)
+}
+
+func TestResolveReferences_WorkloadPVCClaimName_ShowsVolumeMountUsages_Job(t *testing.T) {
+	uri := "file:///tmp/job.yaml"
+	yamlContent := strings.TrimLeft(`
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: demo
+spec:
+  template:
+    spec:
+      restartPolicy: Never
+      volumes:
+      - name: data
+        persistentVolumeClaim:
+          claimName: mypvc
+      containers:
+      - name: app
+        image: nginx
+        volumeMounts:
+        - name: data
+          mountPath: /data
+      - name: sidecar
+        image: busybox
+        volumeMounts:
+        - name: data
+          mountPath: /data2
+`, "\n")
+
+	assertWorkloadPVCClaimNameReferences(t, uri, yamlContent)
+}
+
+func TestResolveReferences_WorkloadPVCClaimName_ShowsVolumeMountUsages_CronJob(t *testing.T) {
+	uri := "file:///tmp/cronjob.yaml"
+	yamlContent := strings.TrimLeft(`
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: demo
+spec:
+  schedule: "*/5 * * * *"
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          restartPolicy: Never
+          volumes:
+          - name: data
+            persistentVolumeClaim:
+              claimName: mypvc
+          containers:
+          - name: app
+            image: nginx
+            volumeMounts:
+            - name: data
+              mountPath: /data
+          - name: sidecar
+            image: busybox
+            volumeMounts:
+            - name: data
+              mountPath: /data2
+`, "\n")
+
+	assertWorkloadPVCClaimNameReferencesWithClaimPath(
+		t,
+		uri,
+		yamlContent,
+		[]string{"spec", "jobTemplate", "spec", "template", "spec", "volumes", "persistentVolumeClaim", "claimName"},
+	)
+}
+
+func assertWorkloadPVCClaimNameReferences(t *testing.T, uri string, yamlContent string) {
+	t.Helper()
+
+	store := indexer.NewStore()
+	r := NewResolver(store, &config.Config{})
+
+	// Derive cursor position from parsed YAML to avoid brittle line/col counting.
+	var root yaml.Node
+	if err := yaml.Unmarshal([]byte(yamlContent), &root); err != nil {
+		t.Fatalf("failed to parse yaml: %v", err)
+	}
+	claimNode := findScalarByPath(&root, []string{"spec", "template", "spec", "volumes", "persistentVolumeClaim", "claimName"}, "mypvc")
+	if claimNode == nil {
+		t.Fatalf("failed to locate claimName node")
+	}
+	line := claimNode.Line - 1
+	col := claimNode.Column - 1
+
+	locs, err := r.ResolveReferences(yamlContent, uri, line, col)
+	if err != nil {
+		t.Fatalf("ResolveReferences failed: %v", err)
+	}
+	if len(locs) < 3 {
+		t.Fatalf("expected at least 3 locations (volume name + 2 mounts), got %d", len(locs))
+	}
+
+	// We expect 1 volume name + at least 2 volumeMount name occurrences for "data".
+	foundDataRanges := 0
+	for _, loc := range locs {
+		if loc.URI != uri {
+			continue
+		}
+		if loc.Range.End.Character-loc.Range.Start.Character == uint32(len("data")) {
+			foundDataRanges++
+		}
+	}
+	if foundDataRanges < 3 {
+		t.Fatalf("expected >=3 uri-local 'data' ranges (1 volume + 2 mounts), got %d", foundDataRanges)
+	}
+}
+
+func assertWorkloadPVCClaimNameReferencesWithClaimPath(t *testing.T, uri string, yamlContent string, claimPath []string) {
+	t.Helper()
+
+	store := indexer.NewStore()
+	r := NewResolver(store, &config.Config{})
+
+	var root yaml.Node
+	if err := yaml.Unmarshal([]byte(yamlContent), &root); err != nil {
+		t.Fatalf("failed to parse yaml: %v", err)
+	}
+	claimNode := findScalarByPath(&root, claimPath, "mypvc")
+	if claimNode == nil {
+		t.Fatalf("failed to locate claimName node")
+	}
+	line := claimNode.Line - 1
+	col := claimNode.Column - 1
+
+	locs, err := r.ResolveReferences(yamlContent, uri, line, col)
+	if err != nil {
+		t.Fatalf("ResolveReferences failed: %v", err)
+	}
+	if len(locs) < 3 {
+		t.Fatalf("expected at least 3 locations (volume name + 2 mounts), got %d", len(locs))
+	}
+
+	foundDataRanges := 0
+	for _, loc := range locs {
+		if loc.URI != uri {
+			continue
+		}
+		if loc.Range.End.Character-loc.Range.Start.Character == uint32(len("data")) {
+			foundDataRanges++
+		}
+	}
+	if foundDataRanges < 3 {
+		t.Fatalf("expected >=3 uri-local 'data' ranges (1 volume + 2 mounts), got %d", foundDataRanges)
+	}
+}
+
+func findScalarByPath(root *yaml.Node, path []string, value string) *yaml.Node {
+	// Traverses YAML and returns the first scalar node whose key-path (ignoring sequence indices)
+	// matches the given path and has the requested scalar value.
+	var found *yaml.Node
+	var walk func(n *yaml.Node, p []string)
+	walk = func(n *yaml.Node, p []string) {
+		if found != nil || n == nil {
+			return
+		}
+		switch n.Kind {
+		case yaml.DocumentNode:
+			for _, c := range n.Content {
+				walk(c, p)
+			}
+		case yaml.MappingNode:
+			for i := 0; i < len(n.Content); i += 2 {
+				k := n.Content[i]
+				v := n.Content[i+1]
+				walk(v, append(p, k.Value))
+			}
+		case yaml.SequenceNode:
+			for _, item := range n.Content {
+				walk(item, p)
+			}
+		case yaml.ScalarNode:
+			if len(p) == len(path) {
+				match := true
+				for i := range p {
+					if p[i] != path[i] {
+						match = false
+						break
+					}
+				}
+				if match && n.Value == value {
+					found = n
+				}
+			}
+		}
+	}
+	walk(root, nil)
+	return found
 }
 
 func TestResolveDefinition_Label(t *testing.T) {

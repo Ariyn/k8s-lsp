@@ -300,7 +300,7 @@ func textDocumentReferences(context *glsp.Context, params *protocol.ReferencePar
 		return nil, nil
 	}
 
-	locs, err := state.Resolver.ResolveReferences(content, int(params.Position.Line), int(params.Position.Character))
+	locs, err := state.Resolver.ResolveReferences(content, uri, int(params.Position.Line), int(params.Position.Character))
 	if err != nil {
 		log.Error().Err(err).Msg("Failed to resolve references")
 		return nil, nil

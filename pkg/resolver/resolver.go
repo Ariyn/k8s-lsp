@@ -290,7 +290,7 @@ func (r *Resolver) ResolveDefinition(docContent string, uri string, line, col in
 	return nil, nil
 }
 
-func (r *Resolver) ResolveReferences(docContent string, line, col int) ([]protocol.Location, error) {
+func (r *Resolver) ResolveReferences(docContent string, uri string, line, col int) ([]protocol.Location, error) {
 	decoder := yaml.NewDecoder(strings.NewReader(docContent))
 
 	for {
@@ -306,6 +306,17 @@ func (r *Resolver) ResolveReferences(docContent string, line, col int) ([]protoc
 		targetNode, _, path := findNodeAt(&node, line+1, col+1)
 		if targetNode != nil {
 			log.Debug().Str("value", targetNode.Value).Strs("path", path).Msg("Found node at cursor (References)")
+
+			// Special case: within a workload (Deployment/DaemonSet/etc), map
+			// spec.template.spec.volumes[].persistentVolumeClaim.claimName ->
+			// containers[].volumeMounts[].name locations for the matching volume.
+			// This helps "find references" show where a PVC claim is mounted.
+			if isWorkloadPVCClaimNamePath(path) {
+				locs := findPVCClaimMountUsagesInDocument(&node, uri, targetNode.Value)
+				if len(locs) > 0 {
+					return locs, nil
+				}
+			}
 
 			// Check if we are on metadata.name
 			// Path: ["metadata", "name"]
@@ -389,6 +400,233 @@ func (r *Resolver) ResolveReferences(docContent string, line, col int) ([]protoc
 		}
 	}
 	return nil, nil
+}
+
+func isWorkloadPVCClaimNamePath(path []string) bool {
+	// ...volumes[].persistentVolumeClaim.claimName
+	if len(path) < 3 {
+		return false
+	}
+	return path[len(path)-3] == "volumes" && path[len(path)-2] == "persistentVolumeClaim" && path[len(path)-1] == "claimName"
+}
+
+func findPVCClaimMountUsagesInDocument(root *yaml.Node, uri string, claimName string) []protocol.Location {
+	var locations []protocol.Location
+
+	podSpec := findPodSpecNode(root)
+	if podSpec == nil {
+		return nil
+	}
+
+	volumeNameNodes := findVolumeNameNodesForPVCClaim(podSpec, claimName)
+	if len(volumeNameNodes) == 0 {
+		return nil
+	}
+
+	// Index volume names by string for quick match.
+	volumeNames := make(map[string]struct{}, len(volumeNameNodes))
+	for _, n := range volumeNameNodes {
+		if n != nil && n.Kind == yaml.ScalarNode {
+			volumeNames[n.Value] = struct{}{}
+			// Include the volume definition name itself as a helpful reference.
+			locations = append(locations, protocol.Location{
+				URI: uri,
+				Range: protocol.Range{
+					Start: protocol.Position{Line: uint32(n.Line - 1), Character: uint32(n.Column - 1)},
+					End:   protocol.Position{Line: uint32(n.Line - 1), Character: uint32(n.Column - 1 + len(n.Value))},
+				},
+			})
+		}
+	}
+
+	// Find matching volumeMounts by volume name.
+	for _, mountNameNode := range findAllVolumeMountNameNodes(podSpec) {
+		if mountNameNode == nil || mountNameNode.Kind != yaml.ScalarNode {
+			continue
+		}
+		if _, ok := volumeNames[mountNameNode.Value]; ok {
+			locations = append(locations, protocol.Location{
+				URI: uri,
+				Range: protocol.Range{
+					Start: protocol.Position{Line: uint32(mountNameNode.Line - 1), Character: uint32(mountNameNode.Column - 1)},
+					End:   protocol.Position{Line: uint32(mountNameNode.Line - 1), Character: uint32(mountNameNode.Column - 1 + len(mountNameNode.Value))},
+				},
+			})
+		}
+	}
+
+	return locations
+}
+
+func findPodSpecNode(root *yaml.Node) *yaml.Node {
+	// Supports the common workload shapes:
+	// - Pod: spec
+	// - Deployment/DaemonSet/StatefulSet/Job: spec.template.spec
+	// - CronJob: spec.jobTemplate.spec.template.spec
+	if root.Kind == yaml.DocumentNode && len(root.Content) > 0 {
+		root = root.Content[0]
+	}
+	if root == nil || root.Kind != yaml.MappingNode {
+		return nil
+	}
+
+	kind := findKind(root)
+
+	// Helper to follow a mapping path.
+	get := func(n *yaml.Node, key string) *yaml.Node {
+		if n == nil || n.Kind != yaml.MappingNode {
+			return nil
+		}
+		for i := 0; i < len(n.Content); i += 2 {
+			if n.Content[i].Value == key {
+				return n.Content[i+1]
+			}
+		}
+		return nil
+	}
+
+	spec := get(root, "spec")
+	if spec == nil {
+		return nil
+	}
+
+	if kind == "Pod" {
+		return spec
+	}
+
+	// Workloads with template
+	if kind == "Deployment" || kind == "DaemonSet" || kind == "StatefulSet" || kind == "Job" {
+		tmpl := get(spec, "template")
+		return get(tmpl, "spec")
+	}
+
+	// CronJob path
+	if kind == "CronJob" {
+		jt := get(spec, "jobTemplate")
+		jtSpec := get(jt, "spec")
+		tmpl := get(jtSpec, "template")
+		return get(tmpl, "spec")
+	}
+
+	// Fallback: try spec.template.spec if present.
+	tmpl := get(spec, "template")
+	if tmpl != nil {
+		if ps := get(tmpl, "spec"); ps != nil {
+			return ps
+		}
+	}
+	return nil
+}
+
+func findVolumeNameNodesForPVCClaim(podSpec *yaml.Node, claimName string) []*yaml.Node {
+	// Find volumes[] entries where persistentVolumeClaim.claimName == claimName
+	// and return the corresponding volumes[].name scalar nodes.
+	if podSpec == nil || podSpec.Kind != yaml.MappingNode {
+		return nil
+	}
+
+	var volumes *yaml.Node
+	for i := 0; i < len(podSpec.Content); i += 2 {
+		if podSpec.Content[i].Value == "volumes" {
+			volumes = podSpec.Content[i+1]
+			break
+		}
+	}
+	if volumes == nil || volumes.Kind != yaml.SequenceNode {
+		return nil
+	}
+
+	var results []*yaml.Node
+	for _, item := range volumes.Content {
+		if item == nil || item.Kind != yaml.MappingNode {
+			continue
+		}
+
+		var nameNode *yaml.Node
+		var pvcNode *yaml.Node
+		for j := 0; j < len(item.Content); j += 2 {
+			switch item.Content[j].Value {
+			case "name":
+				nameNode = item.Content[j+1]
+			case "persistentVolumeClaim":
+				pvcNode = item.Content[j+1]
+			}
+		}
+		if pvcNode == nil || pvcNode.Kind != yaml.MappingNode {
+			continue
+		}
+		var claimNode *yaml.Node
+		for k := 0; k < len(pvcNode.Content); k += 2 {
+			if pvcNode.Content[k].Value == "claimName" {
+				claimNode = pvcNode.Content[k+1]
+				break
+			}
+		}
+		if claimNode != nil && claimNode.Kind == yaml.ScalarNode && claimNode.Value == claimName {
+			if nameNode != nil && nameNode.Kind == yaml.ScalarNode {
+				results = append(results, nameNode)
+			}
+		}
+	}
+
+	return results
+}
+
+func findAllVolumeMountNameNodes(podSpec *yaml.Node) []*yaml.Node {
+	// Returns all containers[].volumeMounts[].name and initContainers[].volumeMounts[].name nodes.
+	if podSpec == nil || podSpec.Kind != yaml.MappingNode {
+		return nil
+	}
+
+	collectFromContainers := func(containers *yaml.Node) []*yaml.Node {
+		if containers == nil || containers.Kind != yaml.SequenceNode {
+			return nil
+		}
+		var out []*yaml.Node
+		for _, c := range containers.Content {
+			if c == nil || c.Kind != yaml.MappingNode {
+				continue
+			}
+			var vms *yaml.Node
+			for i := 0; i < len(c.Content); i += 2 {
+				if c.Content[i].Value == "volumeMounts" {
+					vms = c.Content[i+1]
+					break
+				}
+			}
+			if vms == nil || vms.Kind != yaml.SequenceNode {
+				continue
+			}
+			for _, vm := range vms.Content {
+				if vm == nil || vm.Kind != yaml.MappingNode {
+					continue
+				}
+				for j := 0; j < len(vm.Content); j += 2 {
+					if vm.Content[j].Value == "name" {
+						out = append(out, vm.Content[j+1])
+						break
+					}
+				}
+			}
+		}
+		return out
+	}
+
+	var containers *yaml.Node
+	var initContainers *yaml.Node
+	for i := 0; i < len(podSpec.Content); i += 2 {
+		switch podSpec.Content[i].Value {
+		case "containers":
+			containers = podSpec.Content[i+1]
+		case "initContainers":
+			initContainers = podSpec.Content[i+1]
+		}
+	}
+
+	var results []*yaml.Node
+	results = append(results, collectFromContainers(containers)...)
+	results = append(results, collectFromContainers(initContainers)...)
+	return results
 }
 
 func findName(root *yaml.Node) string {
