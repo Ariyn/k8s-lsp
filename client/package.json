@@ -2,7 +2,7 @@
   "name": "k8s-lsp-client",
   "displayName": "Kubernetes LSP Client",
   "description": "VS Code Client for Kubernetes LSP",
-  "version": "0.0.4",
+  "version": "0.1.2",
   "publisher": "k8s-lsp",
   "engines": {
     "vscode": "^1.82.0"

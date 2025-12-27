@@ -757,7 +757,7 @@ func (r *Resolver) findVolumeMountSubPathTargets(root *yaml.Node, volumeMountNod
 
 		keyRange := calculateOriginRange(keyNode)
 		targets = append(targets, protocol.Location{
-			URI: "file://" + res.FilePath,
+			URI:   "file://" + res.FilePath,
 			Range: protocol.Range{Start: keyRange.Start, End: keyRange.End},
 		})
 
@@ -960,7 +960,6 @@ func findResourceDataEntryInFile(filePath, expectedKind, namespace, resName, key
 
 	return nil, nil, fmt.Errorf("%s %s/%s key %s not found", expectedKind, namespace, resName, key)
 }
-
 
 func findPodSpecNode(root *yaml.Node) *yaml.Node {
 	// Supports the common workload shapes:

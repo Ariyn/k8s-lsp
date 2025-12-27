@@ -165,8 +165,8 @@ func TestResolveDefinition_PVCVolumeName_ToPV(t *testing.T) {
 
 	store := indexer.NewStore()
 	store.Add(&indexer.K8sResource{
-		Kind:     "PersistentVolume",
-		Name:     "pv-test",
+		Kind: "PersistentVolume",
+		Name: "pv-test",
 		// PV is cluster-scoped; Store will map empty namespace to "default".
 		Namespace: "",
 		FilePath:  "/tmp/pv.yaml",
@@ -228,8 +228,8 @@ func TestResolveReferences(t *testing.T) {
 		Namespace: "default",
 		FilePath:  "/tmp/service.yaml",
 		// Match the location of "my-service" in yamlContent below (0-based line/col).
-		Line:      4,
-		Col:       8,
+		Line: 4,
+		Col:  8,
 	}
 	store.Add(serviceRes)
 
