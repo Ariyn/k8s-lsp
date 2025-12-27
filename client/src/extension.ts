@@ -1,6 +1,6 @@
 import * as fs from 'fs';
 import * as path from 'path';
-import { ExtensionContext, Uri, Position, commands, window, workspace, MarkdownString, Hover } from 'vscode';
+import { ExtensionContext, Uri, Position, Range, DocumentLink, DocumentLinkProvider, TextDocument, CancellationToken, commands, window, workspace, languages, MarkdownString, Hover } from 'vscode';
 
 import {
   LanguageClient,
@@ -12,6 +12,50 @@ import {
 import { K8sFileSystemProvider } from './virtualDocumentProvider';
 
 let client: LanguageClient;
+
+class SubPathDocumentLinkProvider implements DocumentLinkProvider {
+  provideDocumentLinks(document: TextDocument, _token: CancellationToken): DocumentLink[] {
+    const links: DocumentLink[] = [];
+
+    for (let line = 0; line < document.lineCount; line++) {
+      const textLine = document.lineAt(line);
+      const text = textLine.text;
+
+      // Minimal YAML heuristic:
+      //   subPath: some-file.yaml
+      //   subPath: "some-file.yaml"
+      //   subPath: 'some-file.yaml'
+      const match = /^\s*subPath\s*:\s*("([^"]+)"|'([^']+)'|([^\s#]+))/.exec(text);
+      if (!match) {
+        continue;
+      }
+
+      const value = match[2] ?? match[3] ?? match[4];
+      if (!value) {
+        continue;
+      }
+
+      const valueStart = text.indexOf(value);
+      if (valueStart < 0) {
+        continue;
+      }
+
+      const range = new Range(line, valueStart, line, valueStart + value.length);
+      const args = {
+        uri: document.uri.toString(),
+        position: { line, character: valueStart }
+      };
+
+      const cmdUri = Uri.parse(
+        `command:k8sLsp.showSubPathTargets?${encodeURIComponent(JSON.stringify(args))}`
+      );
+
+      links.push(new DocumentLink(range, cmdUri));
+    }
+
+    return links;
+  }
+}
 
 export function activate(context: ExtensionContext) {
   const outputChannel = window.createOutputChannel('Kubernetes LSP');
@@ -155,8 +199,50 @@ export function activate(context: ExtensionContext) {
               }
             }
 
+            if (vscodeLocations.length === 0) {
+              return;
+            }
+
             await commands.executeCommand('editor.action.showReferences', uri, position, vscodeLocations);
           })
+        );
+
+        context.subscriptions.push(
+          commands.registerCommand('k8sLsp.showSubPathTargets', async (args: any) => {
+            const uriStr = args?.uri as string | undefined;
+            const pos = args?.position as { line: number; character: number } | undefined;
+            if (!uriStr || !pos) {
+              return;
+            }
+
+            const uri = Uri.parse(uriStr);
+            const position = new Position(pos.line, pos.character);
+
+            const lspLocations = await client.sendRequest<any[]>('textDocument/references', {
+              textDocument: { uri: uriStr },
+              position: { line: pos.line, character: pos.character },
+              context: { includeDeclaration: false }
+            });
+
+            const vscodeLocations = [] as any[];
+            if (Array.isArray(lspLocations)) {
+              for (const loc of lspLocations) {
+                const converted = await client.protocol2CodeConverter.asLocation(loc);
+                if (converted) {
+                  vscodeLocations.push(converted);
+                }
+              }
+            }
+
+            await commands.executeCommand('editor.action.showReferences', uri, position, vscodeLocations);
+          })
+        );
+
+        context.subscriptions.push(
+          languages.registerDocumentLinkProvider(
+            [{ scheme: 'file', language: 'yaml' }],
+            new SubPathDocumentLinkProvider()
+          )
         );
       })
       .catch((err) => {

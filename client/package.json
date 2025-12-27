@@ -26,6 +26,10 @@
       {
         "command": "k8sLsp.findEmbeddedFileUsages",
         "title": "Kubernetes LSP: Find Embedded File Usages"
+      },
+      {
+        "command": "k8sLsp.showSubPathTargets",
+        "title": "Kubernetes LSP: Show subPath Targets"
       }
     ],
     "languages": [

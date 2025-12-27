@@ -1,6 +1,8 @@
 package resolver
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -759,5 +761,548 @@ spec:
 	}
 	if locs[0].TargetURI != "file:///tmp/pod.yaml" {
 		t.Errorf("Expected TargetURI file:///tmp/pod.yaml, got %s", locs[0].TargetURI)
+	}
+}
+
+func TestResolveDefinition_VolumeMountName_GoesToVolumesName(t *testing.T) {
+	uri := "file:///tmp/deployment.yaml"
+	yamlContent := strings.TrimLeft(`
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: demo
+spec:
+  template:
+    spec:
+      volumes:
+      - name: vector-config
+        configMap:
+          name: vector-config
+      containers:
+      - name: app
+        image: nginx
+        volumeMounts:
+        - name: vector-config
+          mountPath: /etc/vector/vector.yaml
+`, "\n")
+
+	store := indexer.NewStore()
+	r := NewResolver(store, &config.Config{})
+
+	var root yaml.Node
+	if err := yaml.Unmarshal([]byte(yamlContent), &root); err != nil {
+		t.Fatalf("failed to parse yaml: %v", err)
+	}
+	mountNameNode := findScalarByPath(&root, []string{"spec", "template", "spec", "containers", "volumeMounts", "name"}, "vector-config")
+	if mountNameNode == nil {
+		t.Fatalf("failed to locate volumeMounts.name node")
+	}
+	line := mountNameNode.Line - 1
+	col := mountNameNode.Column - 1
+
+	locs, err := r.ResolveDefinition(yamlContent, uri, line, col)
+	if err != nil {
+		t.Fatalf("ResolveDefinition failed: %v", err)
+	}
+	if len(locs) != 1 {
+		t.Fatalf("expected 1 location, got %d", len(locs))
+	}
+	if locs[0].TargetURI != uri {
+		t.Fatalf("expected TargetURI %s, got %s", uri, locs[0].TargetURI)
+	}
+
+	volNameNode := findScalarByPath(&root, []string{"spec", "template", "spec", "volumes", "name"}, "vector-config")
+	if volNameNode == nil {
+		t.Fatalf("failed to locate volumes.name node")
+	}
+	if int(locs[0].TargetRange.Start.Line) != volNameNode.Line-1 {
+		t.Fatalf("expected TargetRange line %d, got %d", volNameNode.Line-1, locs[0].TargetRange.Start.Line)
+	}
+}
+
+func TestResolveReferences_VolumeMountSubPath_ShowsConfigMapKeyAndEmbeddedFile(t *testing.T) {
+	workloadURI := "file:///tmp/deployment.yaml"
+	ns := "default"
+	cmName := "vector-config"
+	key := "iphone-ingress.yaml"
+
+	cmYaml := strings.TrimLeft(`
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: vector-config
+  namespace: default
+data:
+  iphone-ingress.yaml: |-
+    foo: bar
+`, "\n")
+
+	tmpDir := t.TempDir()
+	cmPath := filepath.Join(tmpDir, "configmap.yaml")
+	if err := os.WriteFile(cmPath, []byte(cmYaml), 0o644); err != nil {
+		t.Fatalf("failed to write temp configmap: %v", err)
+	}
+
+	store := indexer.NewStore()
+	store.Add(&indexer.K8sResource{
+		Kind:      "ConfigMap",
+		Name:      cmName,
+		Namespace: ns,
+		FilePath:  cmPath,
+		Line:      0,
+		Col:       0,
+	})
+	r := NewResolver(store, &config.Config{})
+
+	workloadYaml := strings.TrimLeft(`
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: demo
+  namespace: default
+spec:
+  template:
+    spec:
+      volumes:
+      - name: vector-config
+        configMap:
+          name: vector-config
+      containers:
+      - name: app
+        image: nginx
+        volumeMounts:
+        - name: vector-config
+          mountPath: /etc/vector/vector.yaml
+          subPath: iphone-ingress.yaml
+`, "\n")
+
+	var root yaml.Node
+	if err := yaml.Unmarshal([]byte(workloadYaml), &root); err != nil {
+		t.Fatalf("failed to parse yaml: %v", err)
+	}
+	subPathNode := findScalarByPath(&root, []string{"spec", "template", "spec", "containers", "volumeMounts", "subPath"}, key)
+	if subPathNode == nil {
+		t.Fatalf("failed to locate volumeMounts.subPath node")
+	}
+	line := subPathNode.Line - 1
+	col := subPathNode.Column - 1
+
+	locs, err := r.ResolveReferences(workloadYaml, workloadURI, line, col)
+	if err != nil {
+		t.Fatalf("ResolveReferences failed: %v", err)
+	}
+	if len(locs) < 1 {
+		t.Fatalf("expected at least 1 location, got %d", len(locs))
+	}
+
+	foundKeyDef := false
+	foundEmbedded := false
+	for _, loc := range locs {
+		if loc.URI == "file://"+cmPath {
+			foundKeyDef = true
+		}
+		if strings.HasPrefix(loc.URI, "k8s-embedded://") {
+			foundEmbedded = true
+		}
+	}
+	if !foundKeyDef {
+		t.Fatalf("expected to find ConfigMap key definition location")
+	}
+	if !foundEmbedded {
+		t.Fatalf("expected to find embedded virtual file location")
+	}
+}
+
+func TestResolveReferences_VolumeMountSubPath_RespectsItemsPathMapping(t *testing.T) {
+	workloadURI := "file:///tmp/deployment.yaml"
+	ns := "default"
+	cmName := "vector-config"
+	key := "iphone-ingress.yaml"
+	fileName := "mapped.yaml"
+
+	cmYaml := strings.TrimLeft(`
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: vector-config
+  namespace: default
+data:
+  iphone-ingress.yaml: |-
+    foo: bar
+`, "\n")
+
+	tmpDir := t.TempDir()
+	cmPath := filepath.Join(tmpDir, "configmap.yaml")
+	if err := os.WriteFile(cmPath, []byte(cmYaml), 0o644); err != nil {
+		t.Fatalf("failed to write temp configmap: %v", err)
+	}
+
+	store := indexer.NewStore()
+	store.Add(&indexer.K8sResource{
+		Kind:      "ConfigMap",
+		Name:      cmName,
+		Namespace: ns,
+		FilePath:  cmPath,
+		Line:      0,
+		Col:       0,
+	})
+	r := NewResolver(store, &config.Config{})
+
+	workloadYaml := strings.TrimLeft(`
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: demo
+  namespace: default
+spec:
+  template:
+    spec:
+      volumes:
+      - name: vector-config
+        configMap:
+          name: vector-config
+          items:
+          - key: iphone-ingress.yaml
+            path: mapped.yaml
+      containers:
+      - name: app
+        image: nginx
+        volumeMounts:
+        - name: vector-config
+          mountPath: /etc/vector/vector.yaml
+          subPath: mapped.yaml
+`, "\n")
+
+	var root yaml.Node
+	if err := yaml.Unmarshal([]byte(workloadYaml), &root); err != nil {
+		t.Fatalf("failed to parse yaml: %v", err)
+	}
+	subPathNode := findScalarByPath(&root, []string{"spec", "template", "spec", "containers", "volumeMounts", "subPath"}, fileName)
+	if subPathNode == nil {
+		t.Fatalf("failed to locate volumeMounts.subPath node")
+	}
+	line := subPathNode.Line - 1
+	col := subPathNode.Column - 1
+
+	locs, err := r.ResolveReferences(workloadYaml, workloadURI, line, col)
+	if err != nil {
+		t.Fatalf("ResolveReferences failed: %v", err)
+	}
+
+	// Should resolve to the ConfigMap key definition for "iphone-ingress.yaml" and offer an embedded target for that key.
+	foundKeyDef := false
+	foundEmbeddedForKey := false
+	for _, loc := range locs {
+		if loc.URI == "file://"+cmPath {
+			foundKeyDef = true
+		}
+		if strings.HasPrefix(loc.URI, "k8s-embedded://") && strings.Contains(loc.URI, "/"+key+"?") {
+			foundEmbeddedForKey = true
+		}
+	}
+	if !foundKeyDef {
+		t.Fatalf("expected to find ConfigMap key definition location")
+	}
+	if !foundEmbeddedForKey {
+		t.Fatalf("expected to find embedded target for key %q", key)
+	}
+}
+
+func TestResolveReferences_VolumeMountSubPath_Secret_ShowsKeyAndEmbeddedFile(t *testing.T) {
+	workloadURI := "file:///tmp/deployment.yaml"
+	ns := "default"
+	secName := "obsidian-vault"
+	key := "iphone-ingress.yaml"
+
+	secYaml := strings.TrimLeft(`
+apiVersion: v1
+kind: Secret
+metadata:
+  name: obsidian-vault
+  namespace: default
+stringData:
+  iphone-ingress.yaml: |-
+    hello: world
+`, "\n")
+
+	tmpDir := t.TempDir()
+	secPath := filepath.Join(tmpDir, "secret.yaml")
+	if err := os.WriteFile(secPath, []byte(secYaml), 0o644); err != nil {
+		t.Fatalf("failed to write temp secret: %v", err)
+	}
+
+	store := indexer.NewStore()
+	store.Add(&indexer.K8sResource{
+		Kind:      "Secret",
+		Name:      secName,
+		Namespace: ns,
+		FilePath:  secPath,
+		Line:      0,
+		Col:       0,
+	})
+	r := NewResolver(store, &config.Config{})
+
+	workloadYaml := strings.TrimLeft(`
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: demo
+  namespace: default
+spec:
+  template:
+    spec:
+      volumes:
+      - name: secret-vol
+        secret:
+          secretName: obsidian-vault
+      containers:
+      - name: app
+        image: nginx
+        volumeMounts:
+        - name: secret-vol
+          mountPath: /vault
+          subPath: iphone-ingress.yaml
+`, "\n")
+
+	var root yaml.Node
+	if err := yaml.Unmarshal([]byte(workloadYaml), &root); err != nil {
+		t.Fatalf("failed to parse yaml: %v", err)
+	}
+	subPathNode := findScalarByPath(&root, []string{"spec", "template", "spec", "containers", "volumeMounts", "subPath"}, key)
+	if subPathNode == nil {
+		t.Fatalf("failed to locate volumeMounts.subPath node")
+	}
+	line := subPathNode.Line - 1
+	col := subPathNode.Column - 1
+
+	locs, err := r.ResolveReferences(workloadYaml, workloadURI, line, col)
+	if err != nil {
+		t.Fatalf("ResolveReferences failed: %v", err)
+	}
+	if len(locs) < 1 {
+		t.Fatalf("expected at least 1 location, got %d", len(locs))
+	}
+
+	foundKeyDef := false
+	foundEmbedded := false
+	for _, loc := range locs {
+		if loc.URI == "file://"+secPath {
+			foundKeyDef = true
+		}
+		if strings.HasPrefix(loc.URI, "k8s-embedded://") {
+			foundEmbedded = true
+		}
+	}
+	if !foundKeyDef {
+		t.Fatalf("expected to find Secret key definition location")
+	}
+	if !foundEmbedded {
+		t.Fatalf("expected to find embedded virtual file location")
+	}
+}
+
+func TestResolveReferences_VolumeMountSubPath_ProjectedConfigMap_ShowsKeyAndEmbeddedFile(t *testing.T) {
+	workloadURI := "file:///tmp/deployment.yaml"
+	ns := "default"
+	cmName := "vector-config"
+	key := "iphone-ingress.yaml"
+
+	cmYaml := strings.TrimLeft(`
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: vector-config
+  namespace: default
+data:
+  iphone-ingress.yaml: |-
+    foo: bar
+`, "\n")
+
+	tmpDir := t.TempDir()
+	cmPath := filepath.Join(tmpDir, "configmap.yaml")
+	if err := os.WriteFile(cmPath, []byte(cmYaml), 0o644); err != nil {
+		t.Fatalf("failed to write temp configmap: %v", err)
+	}
+
+	store := indexer.NewStore()
+	store.Add(&indexer.K8sResource{Kind: "ConfigMap", Name: cmName, Namespace: ns, FilePath: cmPath, Line: 0, Col: 0})
+	r := NewResolver(store, &config.Config{})
+
+	workloadYaml := strings.TrimLeft(`
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: demo
+  namespace: default
+spec:
+  template:
+    spec:
+      volumes:
+      - name: proj
+        projected:
+          sources:
+          - configMap:
+              name: vector-config
+      containers:
+      - name: app
+        image: nginx
+        volumeMounts:
+        - name: proj
+          mountPath: /etc/vector
+          subPath: iphone-ingress.yaml
+`, "\n")
+
+	var root yaml.Node
+	if err := yaml.Unmarshal([]byte(workloadYaml), &root); err != nil {
+		t.Fatalf("failed to parse yaml: %v", err)
+	}
+	subPathNode := findScalarByPath(&root, []string{"spec", "template", "spec", "containers", "volumeMounts", "subPath"}, key)
+	if subPathNode == nil {
+		t.Fatalf("failed to locate volumeMounts.subPath node")
+	}
+	line := subPathNode.Line - 1
+	col := subPathNode.Column - 1
+
+	locs, err := r.ResolveReferences(workloadYaml, workloadURI, line, col)
+	if err != nil {
+		t.Fatalf("ResolveReferences failed: %v", err)
+	}
+
+	foundKeyDef := false
+	foundEmbedded := false
+	for _, loc := range locs {
+		if loc.URI == "file://"+cmPath {
+			foundKeyDef = true
+		}
+		if strings.HasPrefix(loc.URI, "k8s-embedded://") {
+			foundEmbedded = true
+		}
+	}
+	if !foundKeyDef {
+		t.Fatalf("expected to find projected ConfigMap key definition location")
+	}
+	if !foundEmbedded {
+		t.Fatalf("expected to find embedded virtual file location")
+	}
+}
+
+func TestResolveReferences_VolumeMountSubPath_ProjectedSecret_ShowsKeyAndEmbeddedFile(t *testing.T) {
+	workloadURI := "file:///tmp/deployment.yaml"
+	ns := "default"
+	secName := "obsidian-vault"
+	key := "iphone-ingress.yaml"
+
+	secYaml := strings.TrimLeft(`
+apiVersion: v1
+kind: Secret
+metadata:
+  name: obsidian-vault
+  namespace: default
+stringData:
+  iphone-ingress.yaml: |-
+    hello: world
+`, "\n")
+
+	tmpDir := t.TempDir()
+	secPath := filepath.Join(tmpDir, "secret.yaml")
+	if err := os.WriteFile(secPath, []byte(secYaml), 0o644); err != nil {
+		t.Fatalf("failed to write temp secret: %v", err)
+	}
+
+	store := indexer.NewStore()
+	store.Add(&indexer.K8sResource{Kind: "Secret", Name: secName, Namespace: ns, FilePath: secPath, Line: 0, Col: 0})
+	r := NewResolver(store, &config.Config{})
+
+	workloadYaml := strings.TrimLeft(`
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: demo
+  namespace: default
+spec:
+  template:
+    spec:
+      volumes:
+      - name: proj
+        projected:
+          sources:
+          - secret:
+              name: obsidian-vault
+      containers:
+      - name: app
+        image: nginx
+        volumeMounts:
+        - name: proj
+          mountPath: /vault
+          subPath: iphone-ingress.yaml
+`, "\n")
+
+	var root yaml.Node
+	if err := yaml.Unmarshal([]byte(workloadYaml), &root); err != nil {
+		t.Fatalf("failed to parse yaml: %v", err)
+	}
+	subPathNode := findScalarByPath(&root, []string{"spec", "template", "spec", "containers", "volumeMounts", "subPath"}, key)
+	if subPathNode == nil {
+		t.Fatalf("failed to locate volumeMounts.subPath node")
+	}
+	line := subPathNode.Line - 1
+	col := subPathNode.Column - 1
+
+	locs, err := r.ResolveReferences(workloadYaml, workloadURI, line, col)
+	if err != nil {
+		t.Fatalf("ResolveReferences failed: %v", err)
+	}
+
+	foundKeyDef := false
+	foundEmbedded := false
+	for _, loc := range locs {
+		if loc.URI == "file://"+secPath {
+			foundKeyDef = true
+		}
+		if strings.HasPrefix(loc.URI, "k8s-embedded://") {
+			foundEmbedded = true
+		}
+	}
+	if !foundKeyDef {
+		t.Fatalf("expected to find projected Secret key definition location")
+	}
+	if !foundEmbedded {
+		t.Fatalf("expected to find embedded virtual file location")
+	}
+}
+
+func TestEmbeddedContent_SecretData_Base64RoundTrip(t *testing.T) {
+	r := NewResolver(indexer.NewStore(), &config.Config{})
+
+	// "hello: world\n" base64
+	secretYaml := strings.TrimLeft(`
+apiVersion: v1
+kind: Secret
+metadata:
+  name: s
+  namespace: default
+data:
+  file.yaml: aGVsbG86IHdvcmxkCg==
+`, "\n")
+
+	got, err := r.ResolveEmbeddedContent(secretYaml, "file.yaml")
+	if err != nil {
+		t.Fatalf("ResolveEmbeddedContent failed: %v", err)
+	}
+	if got != "hello: world\n" {
+		t.Fatalf("expected decoded content, got %q", got)
+	}
+
+	updated, err := r.UpdateEmbeddedContent(secretYaml, "file.yaml", "updated: yes\n")
+	if err != nil {
+		t.Fatalf("UpdateEmbeddedContent failed: %v", err)
+	}
+
+	got2, err := r.ResolveEmbeddedContent(updated, "file.yaml")
+	if err != nil {
+		t.Fatalf("ResolveEmbeddedContent (updated) failed: %v", err)
+	}
+	if got2 != "updated: yes" {
+		t.Fatalf("expected round-tripped decoded content, got %q", got2)
 	}
 }

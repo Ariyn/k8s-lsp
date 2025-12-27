@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/url"
+	"os"
 	"strings"
 
 	"k8s-lsp/pkg/config"
@@ -159,6 +160,28 @@ func (r *Resolver) ResolveDefinition(docContent string, uri string, line, col in
 			log.Debug().Str("value", targetNode.Value).Strs("path", path).Msg("Found node at cursor")
 
 			originRange := calculateOriginRange(targetNode)
+
+			// Special case: within a workload, go-to-definition for
+			// containers[].volumeMounts[].name -> spec.template.spec.volumes[].name
+			// (and initContainers[].volumeMounts[].name).
+			if isVolumeMountNamePath(path) {
+				podSpec := findPodSpecNode(&node)
+				if podSpec != nil {
+					if volNameNode := findVolumeNameNodeByName(podSpec, targetNode.Value); volNameNode != nil {
+						targetRange := protocol.Range{
+							Start: protocol.Position{Line: uint32(volNameNode.Line - 1), Character: uint32(volNameNode.Column - 1)},
+							End:   protocol.Position{Line: uint32(volNameNode.Line - 1), Character: uint32(volNameNode.Column - 1 + len(volNameNode.Value))},
+						}
+
+						return []protocol.LocationLink{{
+							OriginSelectionRange: &originRange,
+							TargetURI:            uri,
+							TargetRange:          targetRange,
+							TargetSelectionRange: targetRange,
+						}}, nil
+					}
+				}
+			}
 
 			// Check for ConfigMap embedded file
 			kind := findKind(&node)
@@ -315,9 +338,20 @@ func (r *Resolver) ResolveReferences(docContent string, uri string, line, col in
 			return nil, err
 		}
 
-			targetNode, parentNode, path := findNodeAt(&node, line+1, col+1)
+		targetNode, parentNode, path := findNodeAt(&node, line+1, col+1)
 		if targetNode != nil {
 			log.Debug().Str("value", targetNode.Value).Strs("path", path).Msg("Found node at cursor (References)")
+
+			// Special case: clicking volumeMounts[].subPath should open the References UI
+			// with multiple targets so the user can choose:
+			// - the ConfigMap key definition (in the ConfigMap YAML)
+			// - the virtual embedded file (k8s-embedded://)
+			if isVolumeMountSubPathPath(path) {
+				locs := r.findVolumeMountSubPathTargets(&node, parentNode, targetNode.Value)
+				if len(locs) > 0 {
+					return locs, nil
+				}
+			}
 
 			// Special case: ConfigMap embedded file (data/binaryData key)
 			// Shift+F12 should return all usages (mounts/refs), not the virtual file.
@@ -582,6 +616,351 @@ func findPVCClaimMountUsagesInDocument(root *yaml.Node, uri string, claimName st
 
 	return locations
 }
+
+func isVolumeMountNamePath(path []string) bool {
+	// ...containers[].volumeMounts[].name OR ...initContainers[].volumeMounts[].name
+	if len(path) < 2 {
+		return false
+	}
+	return path[len(path)-2] == "volumeMounts" && path[len(path)-1] == "name"
+}
+
+func isVolumeMountSubPathPath(path []string) bool {
+	// ...containers[].volumeMounts[].subPath OR ...initContainers[].volumeMounts[].subPath
+	if len(path) < 2 {
+		return false
+	}
+	return path[len(path)-2] == "volumeMounts" && path[len(path)-1] == "subPath"
+}
+
+func findVolumeNameNodeByName(podSpec *yaml.Node, volumeName string) *yaml.Node {
+	vol := findVolumeNodeByName(podSpec, volumeName)
+	if vol == nil {
+		return nil
+	}
+	for i := 0; i < len(vol.Content); i += 2 {
+		if vol.Content[i].Value == "name" {
+			n := vol.Content[i+1]
+			if n != nil && n.Kind == yaml.ScalarNode {
+				return n
+			}
+			break
+		}
+	}
+	return nil
+}
+
+func findVolumeNodeByName(podSpec *yaml.Node, volumeName string) *yaml.Node {
+	if podSpec == nil || podSpec.Kind != yaml.MappingNode {
+		return nil
+	}
+
+	var volumes *yaml.Node
+	for i := 0; i < len(podSpec.Content); i += 2 {
+		if podSpec.Content[i].Value == "volumes" {
+			volumes = podSpec.Content[i+1]
+			break
+		}
+	}
+	if volumes == nil || volumes.Kind != yaml.SequenceNode {
+		return nil
+	}
+
+	for _, item := range volumes.Content {
+		if item == nil || item.Kind != yaml.MappingNode {
+			continue
+		}
+		for j := 0; j < len(item.Content); j += 2 {
+			if item.Content[j].Value == "name" {
+				nameNode := item.Content[j+1]
+				if nameNode != nil && nameNode.Kind == yaml.ScalarNode && nameNode.Value == volumeName {
+					return item
+				}
+				break
+			}
+		}
+	}
+	return nil
+}
+
+func getMappingScalarValue(m *yaml.Node, key string) *yaml.Node {
+	if m == nil || m.Kind != yaml.MappingNode {
+		return nil
+	}
+	for i := 0; i < len(m.Content); i += 2 {
+		if m.Content[i].Value == key {
+			v := m.Content[i+1]
+			if v != nil && v.Kind == yaml.ScalarNode {
+				return v
+			}
+			return nil
+		}
+	}
+	return nil
+}
+
+func getMappingValue(m *yaml.Node, key string) *yaml.Node {
+	if m == nil || m.Kind != yaml.MappingNode {
+		return nil
+	}
+	for i := 0; i < len(m.Content); i += 2 {
+		if m.Content[i].Value == key {
+			return m.Content[i+1]
+		}
+	}
+	return nil
+}
+
+func (r *Resolver) findVolumeMountSubPathTargets(root *yaml.Node, volumeMountNode *yaml.Node, subPath string) []protocol.Location {
+	if root == nil || volumeMountNode == nil || volumeMountNode.Kind != yaml.MappingNode {
+		return nil
+	}
+
+	mountNameNode := getMappingScalarValue(volumeMountNode, "name")
+	if mountNameNode == nil {
+		return nil
+	}
+
+	podSpec := findPodSpecNode(root)
+	if podSpec == nil {
+		return nil
+	}
+
+	vol := findVolumeNodeByName(podSpec, mountNameNode.Value)
+	if vol == nil {
+		return nil
+	}
+
+	ns := findNamespace(root)
+	if ns == "" {
+		ns = "default"
+	}
+
+	var targets []protocol.Location
+
+	addResourceTarget := func(kind, resName, key string) {
+		if resName == "" || key == "" {
+			return
+		}
+		res := r.Store.Get(kind, ns, resName)
+		if res == nil && ns != "default" {
+			res = r.Store.Get(kind, "default", resName)
+		}
+		if res == nil {
+			return
+		}
+
+		keyNode, _, err := findResourceDataEntryInFile(res.FilePath, kind, ns, resName, key)
+		if err != nil || keyNode == nil {
+			return
+		}
+
+		keyRange := calculateOriginRange(keyNode)
+		targets = append(targets, protocol.Location{
+			URI: "file://" + res.FilePath,
+			Range: protocol.Range{Start: keyRange.Start, End: keyRange.End},
+		})
+
+		// Offer the virtual embedded file as an alternative target.
+		sourceURI := "file://" + res.FilePath
+		sourceEncoded := base64.URLEncoding.EncodeToString([]byte(sourceURI))
+		keyEncoded := base64.URLEncoding.EncodeToString([]byte(key))
+		embeddedURI := fmt.Sprintf("k8s-embedded://%s/%s/%s?source=%s&key=%s", ns, resName, key, sourceEncoded, keyEncoded)
+		targets = append(targets, protocol.Location{
+			URI: embeddedURI,
+			Range: protocol.Range{
+				Start: protocol.Position{Line: 0, Character: 0},
+				End:   protocol.Position{Line: 0, Character: 0},
+			},
+		})
+	}
+
+	// configMap volume
+	if cm := getMappingValue(vol, "configMap"); cm != nil && cm.Kind == yaml.MappingNode {
+		cmName := ""
+		if cmNameNode := getMappingScalarValue(cm, "name"); cmNameNode != nil {
+			cmName = cmNameNode.Value
+		}
+		if cmName != "" {
+			key, ok := resolveKeyFromItems(getMappingValue(cm, "items"), subPath)
+			if ok {
+				addResourceTarget("ConfigMap", cmName, key)
+			}
+		}
+	}
+
+	// secret volume
+	if sec := getMappingValue(vol, "secret"); sec != nil && sec.Kind == yaml.MappingNode {
+		secName := ""
+		if secNameNode := getMappingScalarValue(sec, "secretName"); secNameNode != nil {
+			secName = secNameNode.Value
+		}
+		if secName != "" {
+			key, ok := resolveKeyFromItems(getMappingValue(sec, "items"), subPath)
+			if ok {
+				addResourceTarget("Secret", secName, key)
+			}
+		}
+	}
+
+	// projected volume sources[].{configMap,secret}
+	if projected := getMappingValue(vol, "projected"); projected != nil && projected.Kind == yaml.MappingNode {
+		sources := getMappingValue(projected, "sources")
+		if sources != nil && sources.Kind == yaml.SequenceNode {
+			for _, src := range sources.Content {
+				if src == nil || src.Kind != yaml.MappingNode {
+					continue
+				}
+				if cm2 := getMappingValue(src, "configMap"); cm2 != nil && cm2.Kind == yaml.MappingNode {
+					cmName := ""
+					if cmNameNode := getMappingScalarValue(cm2, "name"); cmNameNode != nil {
+						cmName = cmNameNode.Value
+					}
+					if cmName != "" {
+						key, ok := resolveKeyFromItems(getMappingValue(cm2, "items"), subPath)
+						if ok {
+							addResourceTarget("ConfigMap", cmName, key)
+						}
+					}
+				}
+
+				if sec2 := getMappingValue(src, "secret"); sec2 != nil && sec2.Kind == yaml.MappingNode {
+					secName := ""
+					// projected secret uses "name" (not secretName)
+					if secNameNode := getMappingScalarValue(sec2, "name"); secNameNode != nil {
+						secName = secNameNode.Value
+					}
+					if secName != "" {
+						key, ok := resolveKeyFromItems(getMappingValue(sec2, "items"), subPath)
+						if ok {
+							addResourceTarget("Secret", secName, key)
+						}
+					}
+				}
+			}
+		}
+	}
+
+	if len(targets) == 0 {
+		return nil
+	}
+	return targets
+}
+
+func resolveKeyFromItems(items *yaml.Node, subPath string) (string, bool) {
+	// If items is not specified, filename defaults to key.
+	if items == nil {
+		return subPath, true
+	}
+	if items.Kind != yaml.SequenceNode {
+		return subPath, true
+	}
+	for _, item := range items.Content {
+		if item == nil || item.Kind != yaml.MappingNode {
+			continue
+		}
+		keyNode := getMappingScalarValue(item, "key")
+		pathNode := getMappingScalarValue(item, "path")
+		if keyNode == nil {
+			continue
+		}
+		fileName := keyNode.Value
+		if pathNode != nil && pathNode.Value != "" {
+			fileName = pathNode.Value
+		}
+		if fileName == subPath {
+			return keyNode.Value, true
+		}
+	}
+	// items specified but no match => not from this source
+	return "", false
+}
+
+func findResourceDataEntryInFile(filePath, expectedKind, namespace, resName, key string) (*yaml.Node, *yaml.Node, error) {
+	bytes, err := os.ReadFile(filePath)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	decoder := yaml.NewDecoder(strings.NewReader(string(bytes)))
+	for {
+		var doc yaml.Node
+		if err := decoder.Decode(&doc); err != nil {
+			if err == io.EOF {
+				break
+			}
+			return nil, nil, err
+		}
+
+		root := &doc
+		if root.Kind == yaml.DocumentNode && len(root.Content) > 0 {
+			root = root.Content[0]
+		}
+		if root == nil || root.Kind != yaml.MappingNode {
+			continue
+		}
+
+		if findKind(root) != expectedKind {
+			continue
+		}
+		if findName(root) != resName {
+			continue
+		}
+		resNS := findNamespace(root)
+		if resNS == "" {
+			resNS = "default"
+		}
+		if namespace == "" {
+			namespace = "default"
+		}
+		if resNS != namespace {
+			continue
+		}
+
+		searchSections := func(sectionKeys ...string) (*yaml.Node, *yaml.Node) {
+			for i := 0; i < len(root.Content); i += 2 {
+				for _, secKey := range sectionKeys {
+					if root.Content[i].Value != secKey {
+						continue
+					}
+					dataNode := root.Content[i+1]
+					if dataNode == nil || dataNode.Kind != yaml.MappingNode {
+						continue
+					}
+					for j := 0; j < len(dataNode.Content); j += 2 {
+						k := dataNode.Content[j]
+						v := dataNode.Content[j+1]
+						if k != nil && k.Kind == yaml.ScalarNode && k.Value == key {
+							return k, v
+						}
+					}
+				}
+			}
+			return nil, nil
+		}
+
+		if expectedKind == "ConfigMap" {
+			k, v := searchSections("data", "binaryData")
+			if k != nil {
+				return k, v, nil
+			}
+		}
+		if expectedKind == "Secret" {
+			// Prefer stringData if present.
+			k, v := searchSections("stringData")
+			if k != nil {
+				return k, v, nil
+			}
+			k, v = searchSections("data")
+			if k != nil {
+				return k, v, nil
+			}
+		}
+	}
+
+	return nil, nil, fmt.Errorf("%s %s/%s key %s not found", expectedKind, namespace, resName, key)
+}
+
 
 func findPodSpecNode(root *yaml.Node) *yaml.Node {
 	// Supports the common workload shapes:
@@ -1159,25 +1538,60 @@ func (r *Resolver) ResolveEmbeddedContent(docContent string, key string) (string
 			return "", err
 		}
 
-		if node.Kind == yaml.DocumentNode && len(node.Content) > 0 {
-			root := node.Content[0]
-			if root.Kind == yaml.MappingNode {
-				for i := 0; i < len(root.Content); i += 2 {
-					if root.Content[i].Value == "data" || root.Content[i].Value == "binaryData" {
-						dataNode := root.Content[i+1]
-						if dataNode.Kind == yaml.MappingNode {
-							for j := 0; j < len(dataNode.Content); j += 2 {
-								if dataNode.Content[j].Value == key {
-									return dataNode.Content[j+1].Value, nil
-								}
-							}
+		if node.Kind != yaml.DocumentNode || len(node.Content) == 0 {
+			continue
+		}
+		root := node.Content[0]
+		if root == nil || root.Kind != yaml.MappingNode {
+			continue
+		}
+
+		kind := findKind(root)
+		searchMap := func(section string) (string, bool) {
+			for i := 0; i < len(root.Content); i += 2 {
+				if root.Content[i].Value != section {
+					continue
+				}
+				m := root.Content[i+1]
+				if m == nil || m.Kind != yaml.MappingNode {
+					return "", false
+				}
+				for j := 0; j < len(m.Content); j += 2 {
+					if m.Content[j].Value == key {
+						val := m.Content[j+1]
+						if val != nil {
+							return val.Value, true
 						}
+						return "", true
 					}
 				}
 			}
+			return "", false
+		}
+
+		if kind == "ConfigMap" {
+			if v, ok := searchMap("data"); ok {
+				return v, nil
+			}
+			if v, ok := searchMap("binaryData"); ok {
+				return v, nil
+			}
+		}
+		if kind == "Secret" {
+			// Prefer stringData (plain-text).
+			if v, ok := searchMap("stringData"); ok {
+				return v, nil
+			}
+			if v, ok := searchMap("data"); ok {
+				decoded, err := base64.StdEncoding.DecodeString(v)
+				if err != nil {
+					return "", fmt.Errorf("failed to decode Secret.data[%s]: %w", key, err)
+				}
+				return string(decoded), nil
+			}
 		}
 	}
-	return "", fmt.Errorf("key %s not found in ConfigMap data", key)
+	return "", fmt.Errorf("key %s not found", key)
 }
 
 func (r *Resolver) UpdateEmbeddedContent(docContent string, key string, newContent string) (string, error) {
@@ -1188,46 +1602,71 @@ func (r *Resolver) UpdateEmbeddedContent(docContent string, key string, newConte
 	}
 
 	found := false
-	if node.Kind == yaml.DocumentNode && len(node.Content) > 0 {
-		root := node.Content[0]
-		if root.Kind == yaml.MappingNode {
-			for i := 0; i < len(root.Content); i += 2 {
-				if root.Content[i].Value == "data" || root.Content[i].Value == "binaryData" {
-					dataNode := root.Content[i+1]
-					if dataNode.Kind == yaml.MappingNode {
-						// Ensure data map is in block style so block scalars can be used
-						dataNode.Style = 0
-						for j := 0; j < len(dataNode.Content); j += 2 {
-							if dataNode.Content[j].Value == key {
-								// Update the value
-								// Normalize line endings to \n to ensure block scalar style is used
-								normalized := strings.ReplaceAll(newContent, "\r\n", "\n")
+	if node.Kind != yaml.DocumentNode || len(node.Content) == 0 {
+		return "", fmt.Errorf("invalid yaml document")
+	}
+	root := node.Content[0]
+	if root == nil || root.Kind != yaml.MappingNode {
+		return "", fmt.Errorf("invalid yaml root")
+	}
 
-								// Remove trailing spaces from each line to prevent yaml.v3 from forcing quotes
-								lines := strings.Split(normalized, "\n")
-								for k, line := range lines {
-									lines[k] = strings.TrimRight(line, " \t")
-								}
-								normalized = strings.Join(lines, "\n")
+	kind := findKind(root)
 
-								dataNode.Content[j+1].Value = strings.TrimSuffix(normalized, "\n")
-								// Ensure it's a block scalar for readability
-								dataNode.Content[j+1].Style = yaml.LiteralStyle
-								found = true
-								break
-							}
-						}
+	// Normalize line endings to \n.
+	normalized := strings.ReplaceAll(newContent, "\r\n", "\n")
+	// Remove trailing spaces from each line to prevent yaml.v3 from forcing quotes.
+	lines := strings.Split(normalized, "\n")
+	for i, line := range lines {
+		lines[i] = strings.TrimRight(line, " \t")
+	}
+	normalized = strings.Join(lines, "\n")
+	normalized = strings.TrimSuffix(normalized, "\n")
+
+	updateInSection := func(section string, newVal string, style yaml.Style) bool {
+		for i := 0; i < len(root.Content); i += 2 {
+			if root.Content[i].Value != section {
+				continue
+			}
+			m := root.Content[i+1]
+			if m == nil || m.Kind != yaml.MappingNode {
+				return false
+			}
+			m.Style = 0
+			for j := 0; j < len(m.Content); j += 2 {
+				if m.Content[j].Value == key {
+					valNode := m.Content[j+1]
+					if valNode == nil {
+						return false
 					}
+					valNode.Value = newVal
+					valNode.Style = style
+					return true
 				}
-				if found {
-					break
-				}
+			}
+		}
+		return false
+	}
+
+	if kind == "ConfigMap" {
+		if updateInSection("data", normalized, yaml.LiteralStyle) {
+			found = true
+		} else if updateInSection("binaryData", normalized, 0) {
+			found = true
+		}
+	} else if kind == "Secret" {
+		// Prefer stringData when present.
+		if updateInSection("stringData", normalized, yaml.LiteralStyle) {
+			found = true
+		} else {
+			encoded := base64.StdEncoding.EncodeToString([]byte(normalized))
+			if updateInSection("data", encoded, 0) {
+				found = true
 			}
 		}
 	}
 
 	if !found {
-		return "", fmt.Errorf("key %s not found in ConfigMap data", key)
+		return "", fmt.Errorf("key %s not found", key)
 	}
 
 	log.Info().Str("key", key).Str("buf", fmt.Sprintf("%v", node)).Msg("Updated embedded content in ConfigMap")
