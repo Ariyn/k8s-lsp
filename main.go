@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"k8s-lsp/pkg/config"
+	"k8s-lsp/pkg/crd"
 	"k8s-lsp/pkg/indexer"
 	"k8s-lsp/pkg/resolver"
 	"k8s-lsp/pkg/validator"
@@ -32,6 +33,7 @@ type ServerState struct {
 	Validator *validator.Validator
 	Documents map[string]string
 	RootPath  string
+	CRDSources []string
 }
 
 var state *ServerState
@@ -140,6 +142,21 @@ func initialize(context *glsp.Context, params *protocol.InitializeParams) (any, 
 
 	log.Info().Str("root", state.RootPath).Msg("Initializing...")
 
+	// Read initializationOptions from the client (VS Code extension).
+	// Expected shape: { crdSources: string[] }
+	if params != nil {
+		if raw := params.InitializationOptions; raw != nil {
+			if m, ok := raw.(map[string]any); ok {
+				if v, ok := m["crdSources"]; ok {
+					state.CRDSources = toStringSlice(v)
+				}
+			}
+		}
+	}
+	if len(state.CRDSources) > 0 {
+		log.Info().Int("count", len(state.CRDSources)).Msg("Configured CRD sources")
+	}
+
 	return protocol.InitializeResult{
 		Capabilities: capabilities,
 		ServerInfo: &protocol.InitializeResultServerInfo{
@@ -154,6 +171,11 @@ func initialized(context *glsp.Context, params *protocol.InitializedParams) erro
 
 	if state.RootPath != "" {
 		go func() {
+			if len(state.CRDSources) > 0 {
+				log.Info().Msg("Preloading CRDs from configured URLs...")
+				crd.DownloadAndIndex(state.Indexer, state.CRDSources)
+			}
+
 			log.Info().Msg("Starting workspace scan...")
 			if err := state.Indexer.ScanWorkspace(state.RootPath); err != nil {
 				log.Error().Err(err).Msg("Failed to scan workspace")
@@ -164,6 +186,25 @@ func initialized(context *glsp.Context, params *protocol.InitializedParams) erro
 	}
 
 	return nil
+}
+
+func toStringSlice(v any) []string {
+	switch t := v.(type) {
+	case []string:
+		return t
+	case []any:
+		out := make([]string, 0, len(t))
+		for _, it := range t {
+			if s, ok := it.(string); ok {
+				if strings.TrimSpace(s) != "" {
+					out = append(out, s)
+				}
+			}
+		}
+		return out
+	default:
+		return nil
+	}
 }
 
 func shutdown(context *glsp.Context) error {
