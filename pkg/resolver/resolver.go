@@ -315,7 +315,7 @@ func (r *Resolver) ResolveReferences(docContent string, uri string, line, col in
 			return nil, err
 		}
 
-		targetNode, parentNode, path := findNodeAt(&node, line+1, col+1)
+			targetNode, parentNode, path := findNodeAt(&node, line+1, col+1)
 		if targetNode != nil {
 			log.Debug().Str("value", targetNode.Value).Strs("path", path).Msg("Found node at cursor (References)")
 
@@ -345,7 +345,8 @@ func (r *Resolver) ResolveReferences(docContent string, uri string, line, col in
 						cmName = "configmap"
 					}
 
-					return r.findConfigMapEmbeddedFileUsages(ns, cmName, targetNode.Value), nil
+					locs := r.findConfigMapEmbeddedFileUsages(ns, cmName, targetNode.Value)
+					return filterOutLocationAtPosition(locs, uri, line, col), nil
 				}
 			}
 
@@ -356,7 +357,7 @@ func (r *Resolver) ResolveReferences(docContent string, uri string, line, col in
 			if isWorkloadPVCClaimNamePath(path) {
 				locs := findPVCClaimMountUsagesInDocument(&node, uri, targetNode.Value)
 				if len(locs) > 0 {
-					return locs, nil
+					return filterOutLocationAtPosition(locs, uri, line, col), nil
 				}
 			}
 
@@ -377,7 +378,8 @@ func (r *Resolver) ResolveReferences(docContent string, uri string, line, col in
 
 				if kind != "" && name != "" {
 					log.Debug().Str("kind", kind).Str("name", name).Str("namespace", namespace).Msg("Finding references for resource")
-					return r.findReferences(kind, name, namespace), nil
+					locs := r.findReferences(kind, name, namespace)
+					return filterOutLocationAtPosition(locs, uri, line, col), nil
 				}
 			}
 
@@ -387,7 +389,8 @@ func (r *Resolver) ResolveReferences(docContent string, uri string, line, col in
 				namespaceName := targetNode.Value
 				log.Debug().Str("namespace", namespaceName).Msg("Finding references for namespace")
 				// Namespace resources are cluster-scoped, so namespace arg is empty
-				return r.findReferences("Namespace", namespaceName, ""), nil
+				locs := r.findReferences("Namespace", namespaceName, "")
+				return filterOutLocationAtPosition(locs, uri, line, col), nil
 			}
 
 			// Check configured references
@@ -407,7 +410,8 @@ func (r *Resolver) ResolveReferences(docContent string, uri string, line, col in
 							labelKey := path[len(path)-1]
 							labelValue := targetNode.Value
 							log.Debug().Str("key", labelKey).Str("value", labelValue).Msg("Finding references for label definition")
-							return r.findLabelReferences(labelKey, labelValue), nil
+							locs := r.findLabelReferences(labelKey, labelValue)
+							return filterOutLocationAtPosition(locs, uri, line, col), nil
 						}
 					}
 				}
@@ -430,18 +434,57 @@ func (r *Resolver) ResolveReferences(docContent string, uri string, line, col in
 						}
 
 						log.Debug().Str("targetKind", targetKind).Str("targetName", targetName).Msg("Finding references for configured rule")
-						return r.findReferences(targetKind, targetName, targetNamespace), nil
+						locs := r.findReferences(targetKind, targetName, targetNamespace)
+						return filterOutLocationAtPosition(locs, uri, line, col), nil
 					} else if refRule.Symbol == "k8s.label" {
 						labelKey := path[len(path)-1]
 						labelValue := targetNode.Value
 						log.Debug().Str("key", labelKey).Str("value", labelValue).Msg("Finding references for label usage")
-						return r.findLabelReferences(labelKey, labelValue), nil
+						locs := r.findLabelReferences(labelKey, labelValue)
+						return filterOutLocationAtPosition(locs, uri, line, col), nil
 					}
 				}
 			}
 		}
 	}
 	return nil, nil
+}
+
+func filterOutLocationAtPosition(locs []protocol.Location, uri string, line, col int) []protocol.Location {
+	if len(locs) == 0 {
+		return locs
+	}
+
+	pos := protocol.Position{Line: uint32(line), Character: uint32(col)}
+	out := locs[:0]
+	for _, loc := range locs {
+		if loc.URI == uri && rangeContainsPosition(loc.Range, pos) {
+			continue
+		}
+		out = append(out, loc)
+	}
+	return out
+}
+
+func rangeContainsPosition(r protocol.Range, p protocol.Position) bool {
+	// LSP ranges are half-open: [start, end)
+	return comparePosition(r.Start, p) <= 0 && comparePosition(p, r.End) < 0
+}
+
+func comparePosition(a, b protocol.Position) int {
+	if a.Line < b.Line {
+		return -1
+	}
+	if a.Line > b.Line {
+		return 1
+	}
+	if a.Character < b.Character {
+		return -1
+	}
+	if a.Character > b.Character {
+		return 1
+	}
+	return 0
 }
 
 func (r *Resolver) findConfigMapEmbeddedFileUsages(namespace, configMapName, key string) []protocol.Location {

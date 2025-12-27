@@ -225,8 +225,9 @@ func TestResolveReferences(t *testing.T) {
 		Name:      "my-service",
 		Namespace: "default",
 		FilePath:  "/tmp/service.yaml",
-		Line:      0,
-		Col:       0,
+		// Match the location of "my-service" in yamlContent below (0-based line/col).
+		Line:      4,
+		Col:       8,
 	}
 	store.Add(serviceRes)
 
@@ -279,11 +280,9 @@ spec:
 	if err != nil {
 		t.Fatalf("ResolveReferences failed: %v", err)
 	}
-	// Should find:
-	// 1. The definition itself (Service)
-	// 2. The reference in Deployment
-	if len(locs) != 2 {
-		t.Fatalf("Expected 2 locations, got %d", len(locs))
+	// Should find the reference in Deployment (the definition location at the cursor is filtered out).
+	if len(locs) != 1 {
+		t.Fatalf("Expected 1 location, got %d", len(locs))
 	}
 
 	// Check if we found the deployment reference
