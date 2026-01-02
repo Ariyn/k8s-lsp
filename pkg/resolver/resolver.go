@@ -1525,7 +1525,7 @@ func (r *Resolver) findLabelReferences(key, value string) []protocol.Location {
 	return locations
 }
 
-func (r *Resolver) ResolveEmbeddedContent(docContent string, key string) (string, error) {
+func (r *Resolver) ResolveEmbeddedContent(docContent string, key string, configMapName string, namespace string) (string, error) {
 	decoder := yaml.NewDecoder(strings.NewReader(docContent))
 
 	for {
@@ -1681,4 +1681,200 @@ func (r *Resolver) UpdateEmbeddedContent(docContent string, key string, newConte
 	log.Info().Str("buf", buf.String()).Msg("Serialized updated ConfigMap content")
 
 	return buf.String(), nil
+}
+
+func countLeadingSpaces(s string) int {
+	count := 0
+	for count < len(s) && s[count] == ' ' {
+		count++
+	}
+	return count
+}
+
+// BuildEmbeddedContentTextEdit returns a minimal edit that replaces only the YAML scalar value
+// for the given key under ConfigMap data/binaryData. This avoids re-serializing the whole YAML
+// document (which can change the style of other block scalars).
+func (r *Resolver) BuildEmbeddedContentTextEdit(docContent string, key string, newContent string, configMapName string, namespace string) (*protocol.TextEdit, error) {
+	decoder := yaml.NewDecoder(strings.NewReader(docContent))
+
+	var valueNode *yaml.Node
+	for {
+		var node yaml.Node
+		if err := decoder.Decode(&node); err != nil {
+			if err == io.EOF {
+				break
+			}
+			return nil, err
+		}
+
+		if configMapName != "" || namespace != "" {
+			if findKind(&node) != "ConfigMap" {
+				continue
+			}
+			if namespace != "" {
+				ns := findNamespace(&node)
+				if ns == "" {
+					ns = "default"
+				}
+				if ns != namespace {
+					continue
+				}
+			}
+			if configMapName != "" {
+				name := findName(&node)
+				if name != configMapName {
+					continue
+				}
+			}
+		}
+
+		matchCount := 0
+
+		if node.Kind == yaml.DocumentNode && len(node.Content) > 0 {
+			root := node.Content[0]
+			if root.Kind == yaml.MappingNode {
+				for i := 0; i < len(root.Content); i += 2 {
+					if root.Content[i].Value == "data" || root.Content[i].Value == "binaryData" {
+						dataNode := root.Content[i+1]
+						if dataNode.Kind == yaml.MappingNode {
+							for j := 0; j < len(dataNode.Content); j += 2 {
+								if dataNode.Content[j].Value == key {
+									matchCount++
+									if valueNode == nil {
+										valueNode = dataNode.Content[j+1]
+									}
+								}
+							}
+							if matchCount > 1 {
+								return nil, fmt.Errorf("duplicate key %s found in ConfigMap data", key)
+							}
+						}
+					}
+					if valueNode != nil {
+						break
+					}
+				}
+			}
+		}
+		if valueNode != nil {
+			break
+		}
+	}
+
+	if valueNode == nil {
+		return nil, fmt.Errorf("key %s not found in ConfigMap data", key)
+	}
+	if valueNode.Line <= 0 || valueNode.Column <= 0 {
+		return nil, fmt.Errorf("unable to locate YAML scalar position for key %s", key)
+	}
+
+	// Convert YAML (1-based) to LSP (0-based)
+	valueLineIdx := valueNode.Line - 1
+	valueCharIdx := valueNode.Column - 1
+
+	lines := strings.Split(docContent, "\n")
+	if valueLineIdx < 0 || valueLineIdx >= len(lines) {
+		return nil, fmt.Errorf("invalid YAML position for key %s", key)
+	}
+	lineText := lines[valueLineIdx]
+	if valueCharIdx < 0 || valueCharIdx > len(lineText) {
+		return nil, fmt.Errorf("invalid YAML column for key %s", key)
+	}
+
+	baseIndent := countLeadingSpaces(lineText)
+
+	// Determine how far the current scalar extends in the source.
+	// For block scalars, consume indented content lines; for inline scalars, consume to EOL.
+	suffix := strings.TrimLeft(lineText[valueCharIdx:], " ")
+	isBlock := strings.HasPrefix(suffix, "|") || strings.HasPrefix(suffix, ">")
+
+	stopLine := valueLineIdx + 1
+	if isBlock {
+		for stopLine < len(lines) {
+			nextLine := lines[stopLine]
+			trimmed := strings.TrimSpace(nextLine)
+			if trimmed == "" {
+				// Treat truly empty lines as terminators unless they are indented beyond baseIndent.
+				if countLeadingSpaces(nextLine) > baseIndent {
+					stopLine++
+					continue
+				}
+				break
+			}
+			if countLeadingSpaces(nextLine) <= baseIndent {
+				break
+			}
+			stopLine++
+		}
+	} else {
+		// Inline scalar ends at line break.
+		stopLine = valueLineIdx
+	}
+
+	// Preserve the existing block indicator token if present (e.g. |-, |+, >-).
+	indicator := "|"
+	if isBlock {
+		indicatorLine := strings.TrimSpace(lineText[valueCharIdx:])
+		if fields := strings.Fields(indicatorLine); len(fields) > 0 {
+			if strings.HasPrefix(fields[0], "|") || strings.HasPrefix(fields[0], ">") {
+				indicator = fields[0]
+			}
+		}
+	} else {
+		// For multiline content, prefer a literal block scalar (avoids quoted \n strings).
+		if strings.Contains(newContent, "\n") {
+			indicator = "|-"
+		}
+	}
+
+	// Normalize input similarly to UpdateEmbeddedContent
+	normalized := strings.ReplaceAll(newContent, "\r\n", "\n")
+	contentLines := strings.Split(normalized, "\n")
+	for i, line := range contentLines {
+		contentLines[i] = strings.TrimRight(line, " \t")
+	}
+	// Drop a single trailing empty line produced by editor newline-at-EOF
+	if len(contentLines) > 0 && contentLines[len(contentLines)-1] == "" {
+		contentLines = contentLines[:len(contentLines)-1]
+	}
+
+	contentIndent := baseIndent + 2
+	// If the existing block scalar uses a different content indent, keep it.
+	if isBlock {
+		for i := valueLineIdx + 1; i < len(lines); i++ {
+			if strings.TrimSpace(lines[i]) == "" {
+				continue
+			}
+			indent := countLeadingSpaces(lines[i])
+			if indent > baseIndent {
+				contentIndent = indent
+			}
+			break
+		}
+	}
+
+	indentPrefix := strings.Repeat(" ", contentIndent)
+	var replacement strings.Builder
+	replacement.WriteString(indicator)
+	replacement.WriteString("\n")
+	for i, line := range contentLines {
+		replacement.WriteString(indentPrefix)
+		replacement.WriteString(line)
+		if i < len(contentLines)-1 {
+			replacement.WriteString("\n")
+		}
+	}
+	// Ensure the replacement ends with a newline when we replace up to the next line boundary.
+	if isBlock && (len(contentLines) > 0 || indicator != "") {
+		replacement.WriteString("\n")
+	}
+
+	edit := &protocol.TextEdit{
+		Range: protocol.Range{
+			Start: protocol.Position{Line: uint32(valueLineIdx), Character: uint32(valueCharIdx)},
+			End:   protocol.Position{Line: uint32(stopLine), Character: 0},
+		},
+		NewText: replacement.String(),
+	}
+	return edit, nil
 }

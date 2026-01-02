@@ -54,7 +54,6 @@ export class K8sFileSystemProvider implements vscode.FileSystemProvider {
             
             if (edit) {
                 const wsEdit = await this.client.protocol2CodeConverter.asWorkspaceEdit(edit);
-                console.log("EDITED!!!", wsEdit)
                 if (wsEdit) {
                     await vscode.workspace.applyEdit(wsEdit);
                 }

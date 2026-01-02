@@ -478,6 +478,15 @@ func handleSaveEmbeddedContent(context *glsp.Context, params *SaveEmbeddedConten
 	sourceEncoded := q.Get("source")
 	keyEncoded := q.Get("key")
 
+	embeddedNamespace := u.Host
+	configMapName := ""
+	if p := strings.Trim(u.Path, "/"); p != "" {
+		parts := strings.Split(p, "/")
+		if len(parts) >= 1 {
+			configMapName = parts[0]
+		}
+	}
+
 	if sourceEncoded == "" || keyEncoded == "" {
 		return nil, fmt.Errorf("missing source or key in URI")
 	}
@@ -512,30 +521,14 @@ func handleSaveEmbeddedContent(context *glsp.Context, params *SaveEmbeddedConten
 
 	log.Info().Str("source", sourceURI).Str("key", key).Str("content", params.Content).Msg("Saving embedded content")
 
-	newDocContent, err := state.Resolver.UpdateEmbeddedContent(content, key, params.Content)
+	textEdit, err := state.Resolver.BuildEmbeddedContentTextEdit(content, key, params.Content, configMapName, embeddedNamespace)
 	if err != nil {
 		return nil, err
 	}
 
-	// Calculate range of the whole file
-	lines := strings.Split(content, "\n")
-	endLine := len(lines)
-	endChar := 0
-	if endLine > 0 {
-		endChar = len(lines[endLine-1])
-	}
-
 	edit := protocol.WorkspaceEdit{
 		Changes: map[string][]protocol.TextEdit{
-			sourceURI: {
-				{
-					Range: protocol.Range{
-						Start: protocol.Position{Line: 0, Character: 0},
-						End:   protocol.Position{Line: uint32(endLine), Character: uint32(endChar)},
-					},
-					NewText: newDocContent,
-				},
-			},
+			sourceURI: {*textEdit},
 		},
 	}
 
@@ -555,6 +548,15 @@ func handleEmbeddedContent(context *glsp.Context, params *EmbeddedContentParams)
 	q := u.Query()
 	sourceEncoded := q.Get("source")
 	keyEncoded := q.Get("key")
+
+	embeddedNamespace := u.Host
+	configMapName := ""
+	if p := strings.Trim(u.Path, "/"); p != "" {
+		parts := strings.Split(p, "/")
+		if len(parts) >= 1 {
+			configMapName = parts[0]
+		}
+	}
 
 	log.Debug().Str("sourceEncoded", sourceEncoded).Str("keyEncoded", keyEncoded).Msg("Extracted params")
 
@@ -593,5 +595,5 @@ func handleEmbeddedContent(context *glsp.Context, params *EmbeddedContentParams)
 		return "", fmt.Errorf("document not found: %s", sourceURI)
 	}
 
-	return state.Resolver.ResolveEmbeddedContent(content, key)
+	return state.Resolver.ResolveEmbeddedContent(content, key, configMapName, embeddedNamespace)
 }
