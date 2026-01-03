@@ -28,6 +28,7 @@ func TestDownloadAll_UsesCacheOn304(t *testing.T) {
 	opts := DefaultOptions()
 	opts.CacheDir = dir
 	opts.Timeout = 2 * time.Second
+	opts.AllowInsecure = true
 
 	paths1, err := DownloadAll([]string{srv.URL}, opts)
 	if err != nil {

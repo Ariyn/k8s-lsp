@@ -34,6 +34,7 @@ type ServerState struct {
 	Validator *validator.Validator
 	Documents map[string]string
 	RootPath  string
+	CRDSources []string
 
 	scanMu      sync.Mutex
 	scanStarted bool
@@ -169,6 +170,30 @@ func initialize(context *glsp.Context, params *protocol.InitializeParams) (any, 
 			Version: &version,
 		},
 	}, nil
+}
+
+func toStringSlice(v any) []string {
+	switch vv := v.(type) {
+	case []string:
+		out := make([]string, 0, len(vv))
+		for _, s := range vv {
+			if s != "" {
+				out = append(out, s)
+			}
+		}
+		return out
+	case []any:
+		out := make([]string, 0, len(vv))
+		for _, it := range vv {
+			s, ok := it.(string)
+			if ok && s != "" {
+				out = append(out, s)
+			}
+		}
+		return out
+	default:
+		return nil
+	}
 }
 
 func initialized(context *glsp.Context, params *protocol.InitializedParams) error {

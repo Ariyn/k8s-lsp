@@ -6,11 +6,8 @@ import (
 	"fmt"
 	"io"
 	"net/url"
-<<<<<<< HEAD
 	"os"
-=======
 	"path/filepath"
->>>>>>> 06d5f08 (fix some goto definition bug)
 	"strings"
 
 	"k8s-lsp/pkg/config"
@@ -522,7 +519,6 @@ func (r *Resolver) ResolveReferences(docContent string, uri string, line, col in
 	return nil, nil
 }
 
-<<<<<<< HEAD
 func filterOutLocationAtPosition(locs []protocol.Location, uri string, line, col int) []protocol.Location {
 	if len(locs) == 0 {
 		return locs
@@ -876,7 +872,16 @@ func (r *Resolver) findVolumeMountSubPathTargets(root *yaml.Node, volumeMountNod
 						}
 					}
 				}
-=======
+			}
+		}
+	}
+
+	if len(targets) == 0 {
+		return nil
+	}
+	return targets
+}
+
 func scalarRange(node *yaml.Node) protocol.Range {
 	startCol := node.Column - 1
 	length := len(node.Value)
@@ -945,17 +950,13 @@ func findDocumentLocalScalarRefs(root *yaml.Node, uri string, value string, patt
 		case yaml.SequenceNode:
 			for _, item := range n.Content {
 				walk(item, path)
->>>>>>> 06d5f08 (fix some goto definition bug)
 			}
 		}
 	}
 
-<<<<<<< HEAD
-	if len(targets) == 0 {
-		return nil
+		walk(root, []string{})
+		return locs
 	}
-	return targets
-}
 
 func resolveKeyFromItems(items *yaml.Node, subPath string) (string, bool) {
 	// If items is not specified, filename defaults to key.
@@ -1240,10 +1241,6 @@ func findAllVolumeMountNameNodes(podSpec *yaml.Node) []*yaml.Node {
 	results = append(results, collectFromContainers(containers)...)
 	results = append(results, collectFromContainers(initContainers)...)
 	return results
-=======
-	walk(root, []string{})
-	return locs
->>>>>>> 06d5f08 (fix some goto definition bug)
 }
 
 func findName(root *yaml.Node) string {
@@ -1640,7 +1637,16 @@ func (r *Resolver) findLabelReferences(key, value string) []protocol.Location {
 	return locations
 }
 
-func (r *Resolver) ResolveEmbeddedContent(docContent string, key string, configMapName string, namespace string) (string, error) {
+func (r *Resolver) ResolveEmbeddedContent(docContent string, key string, nameAndNamespace ...string) (string, error) {
+	resourceName := ""
+	namespace := ""
+	if len(nameAndNamespace) >= 1 {
+		resourceName = nameAndNamespace[0]
+	}
+	if len(nameAndNamespace) >= 2 {
+		namespace = nameAndNamespace[1]
+	}
+
 	decoder := yaml.NewDecoder(strings.NewReader(docContent))
 
 	for {
@@ -1661,6 +1667,18 @@ func (r *Resolver) ResolveEmbeddedContent(docContent string, key string, configM
 		}
 
 		kind := findKind(root)
+		if resourceName != "" && findName(root) != resourceName {
+			continue
+		}
+		if namespace != "" {
+			ns := findNamespace(root)
+			if ns == "" {
+				ns = "default"
+			}
+			if ns != namespace {
+				continue
+			}
+		}
 		searchMap := func(section string) (string, bool) {
 			for i := 0; i < len(root.Content); i += 2 {
 				if root.Content[i].Value != section {
