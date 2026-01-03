@@ -21,6 +21,9 @@ echo "Copying client source..."
 # Copy everything from client/ to BUILD_DIR/
 cp -r client/. "$BUILD_DIR/"
 
+# Ensure we don't package local build artifacts/dependencies from the repo.
+rm -rf "$BUILD_DIR/node_modules" "$BUILD_DIR/out"
+
 # 2. Build Go binary into the build directory
 echo "Building Go binaries..."
 
@@ -62,7 +65,13 @@ echo "Packaging extension..."
 pushd "$BUILD_DIR" > /dev/null
 
 # Install dependencies if node_modules doesn't exist (or just run install to be safe/update)
-npm install
+
+# Use lockfile for deterministic installs
+if [ -f package-lock.json ]; then
+    npm ci
+else
+    npm install
+fi
 
 # Compile TypeScript
 npm run compile

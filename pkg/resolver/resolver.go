@@ -6,7 +6,11 @@ import (
 	"fmt"
 	"io"
 	"net/url"
+<<<<<<< HEAD
 	"os"
+=======
+	"path/filepath"
+>>>>>>> 06d5f08 (fix some goto definition bug)
 	"strings"
 
 	"k8s-lsp/pkg/config"
@@ -16,6 +20,29 @@ import (
 	protocol "github.com/tliron/glsp/protocol_3_16"
 	"gopkg.in/yaml.v3"
 )
+
+func filePathToURI(path string) string {
+	if path == "" {
+		return ""
+	}
+	// Already a URI (file://, k8s-embedded://, etc).
+	if strings.Contains(path, "://") {
+		return path
+	}
+
+	normalized := filepath.ToSlash(path)
+
+	// Windows drive letter paths need a leading slash: /C:/Users/...
+	if len(normalized) >= 3 {
+		drive := normalized[0]
+		if ((drive >= 'A' && drive <= 'Z') || (drive >= 'a' && drive <= 'z')) && normalized[1] == ':' && normalized[2] == '/' {
+			normalized = "/" + normalized
+		}
+	}
+
+	u := url.URL{Scheme: "file", Path: normalized}
+	return u.String()
+}
 
 type Resolver struct {
 	Store  *indexer.Store
@@ -306,7 +333,7 @@ func (r *Resolver) ResolveDefinition(docContent string, uri string, line, col in
 								}
 								return []protocol.LocationLink{{
 									OriginSelectionRange: &originRange,
-									TargetURI:            "file://" + res.FilePath,
+									TargetURI:            filePathToURI(res.FilePath),
 									TargetRange:          targetRange,
 									TargetSelectionRange: targetRange,
 								}}, nil
@@ -430,6 +457,17 @@ func (r *Resolver) ResolveReferences(docContent string, uri string, line, col in
 			// Check configured references
 			kind = findKind(&node)
 
+			// Document-local references: volumes[].name <-> containers[].volumeMounts[].name
+			// This is an intra-resource symbol (not a K8s resource), so it isn't in the global store.
+			if volPatterns, ok := volumeNamePatternsForKind(kind); ok {
+				if matchesAnyPath(path, volPatterns) {
+					name := targetNode.Value
+					if name != "" {
+						return findDocumentLocalScalarRefs(&node, uri, name, volPatterns), nil
+					}
+				}
+			}
+
 			// Check if we are at a definition site (Symbol)
 			for _, sym := range r.Config.Symbols {
 				for _, def := range sym.Definitions {
@@ -484,6 +522,7 @@ func (r *Resolver) ResolveReferences(docContent string, uri string, line, col in
 	return nil, nil
 }
 
+<<<<<<< HEAD
 func filterOutLocationAtPosition(locs []protocol.Location, uri string, line, col int) []protocol.Location {
 	if len(locs) == 0 {
 		return locs
@@ -837,10 +876,81 @@ func (r *Resolver) findVolumeMountSubPathTargets(root *yaml.Node, volumeMountNod
 						}
 					}
 				}
+=======
+func scalarRange(node *yaml.Node) protocol.Range {
+	startCol := node.Column - 1
+	length := len(node.Value)
+	if node.Style == yaml.DoubleQuotedStyle || node.Style == yaml.SingleQuotedStyle {
+		length += 2
+	}
+	return protocol.Range{
+		Start: protocol.Position{Line: uint32(node.Line - 1), Character: uint32(startCol)},
+		End:   protocol.Position{Line: uint32(node.Line - 1), Character: uint32(startCol + length)},
+	}
+}
+
+func matchesAnyPath(path []string, patterns []string) bool {
+	for _, p := range patterns {
+		if matchPath(path, p) {
+			return true
+		}
+	}
+	return false
+}
+
+func volumeNamePatternsForKind(kind string) ([]string, bool) {
+	// Workload kinds with PodTemplate
+	switch kind {
+	case "Deployment", "StatefulSet", "DaemonSet", "Job", "CronJob":
+		return []string{
+			"spec.template.spec.volumes[].name",
+			"spec.template.spec.containers[].volumeMounts[].name",
+			"spec.template.spec.initContainers[].volumeMounts[].name",
+		}, true
+	case "Pod":
+		return []string{
+			"spec.volumes[].name",
+			"spec.containers[].volumeMounts[].name",
+			"spec.initContainers[].volumeMounts[].name",
+		}, true
+	default:
+		return nil, false
+	}
+}
+
+func findDocumentLocalScalarRefs(root *yaml.Node, uri string, value string, patterns []string) []protocol.Location {
+	var locs []protocol.Location
+
+	var walk func(n *yaml.Node, path []string)
+	walk = func(n *yaml.Node, path []string) {
+		switch n.Kind {
+		case yaml.DocumentNode:
+			if len(n.Content) > 0 {
+				walk(n.Content[0], path)
+			}
+		case yaml.MappingNode:
+			for i := 0; i < len(n.Content); i += 2 {
+				keyNode := n.Content[i]
+				valNode := n.Content[i+1]
+				nextPath := append(path, keyNode.Value)
+
+				if valNode.Kind == yaml.ScalarNode {
+					if valNode.Value == value && matchesAnyPath(nextPath, patterns) {
+						locs = append(locs, protocol.Location{URI: uri, Range: scalarRange(valNode)})
+					}
+					continue
+				}
+				walk(valNode, nextPath)
+			}
+		case yaml.SequenceNode:
+			for _, item := range n.Content {
+				walk(item, path)
+>>>>>>> 06d5f08 (fix some goto definition bug)
 			}
 		}
 	}
 
+<<<<<<< HEAD
 	if len(targets) == 0 {
 		return nil
 	}
@@ -1130,6 +1240,10 @@ func findAllVolumeMountNameNodes(podSpec *yaml.Node) []*yaml.Node {
 	results = append(results, collectFromContainers(containers)...)
 	results = append(results, collectFromContainers(initContainers)...)
 	return results
+=======
+	walk(root, []string{})
+	return locs
+>>>>>>> 06d5f08 (fix some goto definition bug)
 }
 
 func findName(root *yaml.Node) string {
@@ -1174,7 +1288,7 @@ func (r *Resolver) findReferences(kind, name, namespace string) []protocol.Locat
 	def := r.Store.Get(kind, namespace, name)
 	if def != nil {
 		locations = append(locations, protocol.Location{
-			URI: "file://" + def.FilePath,
+			URI: filePathToURI(def.FilePath),
 			Range: protocol.Range{
 				Start: protocol.Position{Line: uint32(def.Line), Character: uint32(def.Col)},
 				End:   protocol.Position{Line: uint32(def.Line), Character: uint32(def.Col + len(def.Name))},
@@ -1191,7 +1305,7 @@ func (r *Resolver) findReferences(kind, name, namespace string) []protocol.Locat
 		for _, ref := range res.References {
 			if ref.Kind == kind && ref.Name == name {
 				locations = append(locations, protocol.Location{
-					URI: "file://" + res.FilePath,
+					URI: filePathToURI(res.FilePath),
 					Range: protocol.Range{
 						Start: protocol.Position{Line: uint32(ref.Line), Character: uint32(ref.Col)},
 						End:   protocol.Position{Line: uint32(ref.Line), Character: uint32(ref.Col + len(ref.Name))},
@@ -1228,7 +1342,7 @@ func (r *Resolver) findWorkloadsByLabel(key, value string, originRange protocol.
 		}
 		links = append(links, protocol.LocationLink{
 			OriginSelectionRange: &originRange,
-			TargetURI:            "file://" + res.FilePath,
+			TargetURI:            filePathToURI(res.FilePath),
 			TargetRange:          targetRange,
 			TargetSelectionRange: targetRange,
 		})
@@ -1252,7 +1366,7 @@ func (r *Resolver) findServiceByName(name string, originRange protocol.Range) []
 		}
 		return []protocol.LocationLink{{
 			OriginSelectionRange: &originRange,
-			TargetURI:            "file://" + res.FilePath,
+			TargetURI:            filePathToURI(res.FilePath),
 			TargetRange:          targetRange,
 			TargetSelectionRange: targetRange,
 		}}
@@ -1271,13 +1385,14 @@ func (r *Resolver) findNamespaceByName(name string, originRange protocol.Range) 
 		}
 		return []protocol.LocationLink{{
 			OriginSelectionRange: &originRange,
-			TargetURI:            "file://" + res.FilePath,
+			TargetURI:            filePathToURI(res.FilePath),
 			TargetRange:          targetRange,
 			TargetSelectionRange: targetRange,
 		}}
 	}
 	return nil
-} // Helper functions for path checking
+}
+// Helper functions for path checking
 
 func isServiceSelector(path []string) bool {
 	// Check if path contains "spec" and "selector"
@@ -1498,7 +1613,7 @@ func (r *Resolver) findLabelReferences(key, value string) []protocol.Location {
 	resources := r.Store.FindByLabel(key, value)
 	for _, res := range resources {
 		locations = append(locations, protocol.Location{
-			URI: "file://" + res.FilePath,
+			URI: filePathToURI(res.FilePath),
 			Range: protocol.Range{
 				Start: protocol.Position{Line: uint32(res.Line), Character: uint32(res.Col)},
 				End:   protocol.Position{Line: uint32(res.Line), Character: uint32(res.Col + len(res.Name))},
@@ -1512,7 +1627,7 @@ func (r *Resolver) findLabelReferences(key, value string) []protocol.Location {
 		for _, ref := range res.References {
 			if ref.Symbol == "k8s.label" && ref.Name == value {
 				locations = append(locations, protocol.Location{
-					URI: "file://" + res.FilePath,
+					URI: filePathToURI(res.FilePath),
 					Range: protocol.Range{
 						Start: protocol.Position{Line: uint32(ref.Line), Character: uint32(ref.Col)},
 						End:   protocol.Position{Line: uint32(ref.Line), Character: uint32(ref.Col + len(ref.Name))},
@@ -1732,27 +1847,25 @@ func (r *Resolver) BuildEmbeddedContentTextEdit(docContent string, key string, n
 
 		if node.Kind == yaml.DocumentNode && len(node.Content) > 0 {
 			root := node.Content[0]
-			if root.Kind == yaml.MappingNode {
-				for i := 0; i < len(root.Content); i += 2 {
-					if root.Content[i].Value == "data" || root.Content[i].Value == "binaryData" {
-						dataNode := root.Content[i+1]
-						if dataNode.Kind == yaml.MappingNode {
-							for j := 0; j < len(dataNode.Content); j += 2 {
-								if dataNode.Content[j].Value == key {
-									matchCount++
-									if valueNode == nil {
-										valueNode = dataNode.Content[j+1]
-									}
+			for i := 0; i < len(root.Content); i += 2 {
+				if root.Content[i].Value == "data" || root.Content[i].Value == "binaryData" {
+					dataNode := root.Content[i+1]
+					if dataNode.Kind == yaml.MappingNode {
+						for j := 0; j < len(dataNode.Content); j += 2 {
+							if dataNode.Content[j].Value == key {
+								matchCount++
+								if valueNode == nil {
+									valueNode = dataNode.Content[j+1]
 								}
 							}
-							if matchCount > 1 {
-								return nil, fmt.Errorf("duplicate key %s found in ConfigMap data", key)
-							}
+						}
+						if matchCount > 1 {
+							return nil, fmt.Errorf("duplicate key %s found in ConfigMap data", key)
 						}
 					}
-					if valueNode != nil {
-						break
-					}
+				}
+				if valueNode != nil {
+					break
 				}
 			}
 		}

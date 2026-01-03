@@ -8,9 +8,10 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
+	"time"
 
 	"k8s-lsp/pkg/config"
-	"k8s-lsp/pkg/crd"
 	"k8s-lsp/pkg/indexer"
 	"k8s-lsp/pkg/resolver"
 	"k8s-lsp/pkg/validator"
@@ -27,13 +28,16 @@ const lsName = "k8s-lsp"
 var version = "0.0.1"
 
 type ServerState struct {
-	Store      *indexer.Store
-	Indexer    *indexer.Indexer
-	Resolver   *resolver.Resolver
-	Validator  *validator.Validator
-	Documents  map[string]string
-	RootPath   string
-	CRDSources []string
+	Store     *indexer.Store
+	Indexer   *indexer.Indexer
+	Resolver  *resolver.Resolver
+	Validator *validator.Validator
+	Documents map[string]string
+	RootPath  string
+
+	scanMu      sync.Mutex
+	scanStarted bool
+	ScanDone    chan struct{}
 }
 
 var state *ServerState
@@ -90,6 +94,7 @@ func main() {
 		Resolver:  res,
 		Validator: val,
 		Documents: make(map[string]string),
+		ScanDone:  make(chan struct{}),
 	}
 
 	handler := protocol.Handler{
@@ -169,42 +174,29 @@ func initialize(context *glsp.Context, params *protocol.InitializeParams) (any, 
 func initialized(context *glsp.Context, params *protocol.InitializedParams) error {
 	log.Info().Msg("Client initialized")
 
-	if state.RootPath != "" {
-		go func() {
-			if len(state.CRDSources) > 0 {
-				log.Info().Msg("Preloading CRDs from configured URLs...")
-				crd.DownloadAndIndex(state.Indexer, state.CRDSources)
-			}
-
-			log.Info().Msg("Starting workspace scan...")
-			if err := state.Indexer.ScanWorkspace(state.RootPath); err != nil {
-				log.Error().Err(err).Msg("Failed to scan workspace")
-			} else {
-				log.Info().Msg("Workspace scan completed")
-			}
-		}()
-	}
+	state.startWorkspaceScan()
 
 	return nil
 }
 
-func toStringSlice(v any) []string {
-	switch t := v.(type) {
-	case []string:
-		return t
-	case []any:
-		out := make([]string, 0, len(t))
-		for _, it := range t {
-			if s, ok := it.(string); ok {
-				if strings.TrimSpace(s) != "" {
-					out = append(out, s)
-				}
-			}
-		}
-		return out
-	default:
-		return nil
+func (s *ServerState) startWorkspaceScan() {
+	s.scanMu.Lock()
+	if s.scanStarted || s.RootPath == "" {
+		s.scanMu.Unlock()
+		return
 	}
+	s.scanStarted = true
+	s.scanMu.Unlock()
+
+	go func(root string, done chan struct{}) {
+		defer close(done)
+		log.Info().Msg("Starting workspace scan...")
+		if err := s.Indexer.ScanWorkspace(root); err != nil {
+			log.Error().Err(err).Msg("Failed to scan workspace")
+			return
+		}
+		log.Info().Msg("Workspace scan completed")
+	}(s.RootPath, s.ScanDone)
 }
 
 func shutdown(context *glsp.Context) error {
@@ -311,10 +303,35 @@ func textDocumentDefinition(context *glsp.Context, params *protocol.DefinitionPa
 	log.Debug().Str("uri", uri).Int("line", int(params.Position.Line)).Int("char", int(params.Position.Character)).Msg("Resolving definition")
 	log.Debug().Str("content", content).Msg("Document content for definition")
 
-	locs, err := state.Resolver.ResolveDefinition(content, uri, int(params.Position.Line), int(params.Position.Character))
+	state.startWorkspaceScan()
+
+	resolve := func() ([]protocol.LocationLink, error) {
+		return state.Resolver.ResolveDefinition(content, uri, int(params.Position.Line), int(params.Position.Character))
+	}
+
+	locs, err := resolve()
 	if err != nil {
 		log.Error().Err(err).Msg("Failed to resolve definition")
 		return nil, nil
+	}
+
+	// If the workspace scan is still running, the store may not yet contain the target definition.
+	// Wait briefly for scan completion and retry once.
+	if len(locs) == 0 {
+		state.scanMu.Lock()
+		scanStarted := state.scanStarted
+		scanDone := state.ScanDone
+		state.scanMu.Unlock()
+
+		if scanStarted && scanDone != nil {
+			select {
+			case <-scanDone:
+			case <-time.After(1500 * time.Millisecond):
+			}
+			if retryLocs, retryErr := resolve(); retryErr == nil && len(retryLocs) > 0 {
+				locs = retryLocs
+			}
+		}
 	}
 	log.Debug().Int("locationsFound", len(locs)).Msg("Definition resolution completed")
 
@@ -341,10 +358,35 @@ func textDocumentReferences(context *glsp.Context, params *protocol.ReferencePar
 		return nil, nil
 	}
 
-	locs, err := state.Resolver.ResolveReferences(content, uri, int(params.Position.Line), int(params.Position.Character))
+	state.startWorkspaceScan()
+
+	resolve := func() ([]protocol.Location, error) {
+		return state.Resolver.ResolveReferences(content, uri, int(params.Position.Line), int(params.Position.Character))
+	}
+
+	locs, err := resolve()
 	if err != nil {
 		log.Error().Err(err).Msg("Failed to resolve references")
 		return nil, nil
+	}
+
+	// If the workspace scan is still running, the store may not yet contain references.
+	// Wait briefly for scan completion and retry once.
+	if len(locs) == 0 {
+		state.scanMu.Lock()
+		scanStarted := state.scanStarted
+		scanDone := state.ScanDone
+		state.scanMu.Unlock()
+
+		if scanStarted && scanDone != nil {
+			select {
+			case <-scanDone:
+			case <-time.After(1500 * time.Millisecond):
+			}
+			if retryLocs, retryErr := resolve(); retryErr == nil && len(retryLocs) > 0 {
+				locs = retryLocs
+			}
+		}
 	}
 
 	return locs, nil

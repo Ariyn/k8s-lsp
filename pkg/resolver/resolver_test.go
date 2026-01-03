@@ -302,6 +302,96 @@ spec:
 	}
 }
 
+func TestResolveReferences_VolumeNameLocal(t *testing.T) {
+	cfg := &config.Config{}
+	store := indexer.NewStore()
+	r := NewResolver(store, cfg)
+
+	yamlContent := `
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: demo
+spec:
+  template:
+    spec:
+      volumes:
+      - name: data
+        emptyDir: {}
+      containers:
+      - name: app
+        image: nginx
+        volumeMounts:
+        - name: data
+          mountPath: /data
+`
+
+	// Cursor on the volumeMounts[].name value (the second "data")
+	line := 15
+	col := 17
+
+	locs, err := r.ResolveReferences(yamlContent, "file:///tmp/deploy.yaml", line, col)
+	if err != nil {
+		t.Fatalf("ResolveReferences failed: %v", err)
+	}
+	if len(locs) != 2 {
+		t.Fatalf("Expected 2 locations (volume + mount), got %d", len(locs))
+	}
+
+	// Ensure both hits are in the same file and on different lines.
+	if locs[0].URI != "file:///tmp/deploy.yaml" || locs[1].URI != "file:///tmp/deploy.yaml" {
+		t.Fatalf("Expected both locations to be in deploy.yaml")
+	}
+	if locs[0].Range.Start.Line == locs[1].Range.Start.Line {
+		t.Fatalf("Expected volume and mount references on different lines")
+	}
+}
+
+func TestResolveDefinition_VolumeMountToVolume(t *testing.T) {
+	cfg := &config.Config{}
+	store := indexer.NewStore()
+	r := NewResolver(store, cfg)
+
+	yamlContent := `
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: vector
+spec:
+  template:
+    spec:
+      volumes:
+        - name: vector-config
+          configMap:
+            name: vector-config
+      containers:
+        - name: vector
+          image: timberio/vector:0.51.X-alpine
+          volumeMounts:
+            - name: vector-config
+              mountPath: /etc/vector
+`
+
+	// Cursor on volumeMounts[].name value
+	line := 16
+	col := 21
+
+	locs, err := r.ResolveDefinition(yamlContent, "file:///tmp/vector.yaml", line, col)
+	if err != nil {
+		t.Fatalf("ResolveDefinition failed: %v", err)
+	}
+	if len(locs) != 1 {
+		t.Fatalf("Expected 1 location, got %d", len(locs))
+	}
+	if locs[0].TargetURI != "file:///tmp/vector.yaml" {
+		t.Fatalf("Expected TargetURI to be same document, got %s", locs[0].TargetURI)
+	}
+	// The definition should be on the volumes[].name line (line 9 in this snippet, 0-based in LSP)
+	if locs[0].TargetRange.Start.Line != 9 {
+		t.Fatalf("Expected volume definition at line 9, got %d", locs[0].TargetRange.Start.Line)
+	}
+}
+
 func TestResolveLabelReferences(t *testing.T) {
 	// 1. Setup Config
 	cfg := &config.Config{
