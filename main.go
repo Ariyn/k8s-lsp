@@ -28,12 +28,12 @@ const lsName = "k8s-lsp"
 var version = "0.0.1"
 
 type ServerState struct {
-	Store     *indexer.Store
-	Indexer   *indexer.Indexer
-	Resolver  *resolver.Resolver
-	Validator *validator.Validator
-	Documents map[string]string
-	RootPath  string
+	Store      *indexer.Store
+	Indexer    *indexer.Indexer
+	Resolver   *resolver.Resolver
+	Validator  *validator.Validator
+	Documents  map[string]string
+	RootPath   string
 	CRDSources []string
 
 	scanMu      sync.Mutex

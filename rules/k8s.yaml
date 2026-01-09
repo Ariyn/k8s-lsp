@@ -26,6 +26,48 @@ references:
       kinds: ["Service"]
       path: "spec.selector"
 
+  - name: workload.selector.matchLabels
+    symbol: k8s.label
+    targetKind: Pod
+    match:
+      kinds: ["Deployment", "StatefulSet", "DaemonSet", "ReplicaSet"]
+      path: "spec.selector.matchLabels"
+
+  - name: networkpolicy.podSelector.matchLabels
+    symbol: k8s.label
+    targetKind: Pod
+    match:
+      kinds: ["NetworkPolicy"]
+      path: "spec.podSelector.matchLabels"
+
+  - name: pdb.selector.matchLabels
+    symbol: k8s.label
+    targetKind: Pod
+    match:
+      kinds: ["PodDisruptionBudget"]
+      path: "spec.selector.matchLabels"
+
+  - name: workload.selector.matchExpressions
+    symbol: k8s.label
+    targetKind: Pod
+    match:
+      kinds: ["Deployment", "StatefulSet", "DaemonSet", "ReplicaSet"]
+      path: "spec.selector.matchExpressions"
+
+  - name: networkpolicy.podSelector.matchExpressions
+    symbol: k8s.label
+    targetKind: Pod
+    match:
+      kinds: ["NetworkPolicy"]
+      path: "spec.podSelector.matchExpressions"
+
+  - name: pdb.selector.matchExpressions
+    symbol: k8s.label
+    targetKind: Pod
+    match:
+      kinds: ["PodDisruptionBudget"]
+      path: "spec.selector.matchExpressions"
+
   - name: ingress.backend.service
     symbol: k8s.resource.name
     targetKind: Service

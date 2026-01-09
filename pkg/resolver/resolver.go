@@ -294,9 +294,21 @@ func (r *Resolver) ResolveDefinition(docContent string, uri string, line, col in
 
 				if matchesKind(refRule.Match.Kinds, kind) && isMatch {
 					if refRule.Symbol == "k8s.label" {
+						ns := currentNamespace
+						if ns == "" {
+							ns = "default"
+						}
+
 						labelKey := path[len(path)-1]
 						labelValue := targetNode.Value
-						return r.findWorkloadsByLabel(labelKey, labelValue, originRange), nil
+						// matchExpressions values[] are scalars under the "values" key; the label key is a sibling field "key".
+						if labelKey == "values" && pathContains(path, "matchExpressions") {
+							if k := findMatchExpressionKeyForValue(&node, targetNode); k != "" {
+								labelKey = k
+							}
+						}
+
+						return r.findWorkloadsByLabel(ns, labelKey, labelValue, originRange), nil
 					} else if refRule.Symbol == "k8s.resource.name" {
 						targetKind := refRule.TargetKind
 
@@ -347,6 +359,62 @@ func (r *Resolver) ResolveDefinition(docContent string, uri string, line, col in
 	}
 
 	return nil, nil
+}
+
+func pathContains(path []string, key string) bool {
+	for _, p := range path {
+		if p == key {
+			return true
+		}
+	}
+	return false
+}
+
+// findMatchExpressionKeyForValue finds the matchExpressions[].key corresponding to the given values[] scalar node.
+func findMatchExpressionKeyForValue(root *yaml.Node, valueNode *yaml.Node) string {
+	if root == nil || valueNode == nil {
+		return ""
+	}
+
+	var walk func(n *yaml.Node) string
+	walk = func(n *yaml.Node) string {
+		if n == nil {
+			return ""
+		}
+		switch n.Kind {
+		case yaml.DocumentNode:
+			for _, c := range n.Content {
+				if k := walk(c); k != "" {
+					return k
+				}
+			}
+		case yaml.MappingNode:
+			// If this mapping has a "values" sequence containing the node, extract the sibling "key".
+			if values := getMappingValue(n, "values"); values != nil && values.Kind == yaml.SequenceNode {
+				for _, item := range values.Content {
+					if item == valueNode {
+						if keyNode := getMappingScalarValue(n, "key"); keyNode != nil {
+							return keyNode.Value
+						}
+					}
+				}
+			}
+			for i := 1; i < len(n.Content); i += 2 {
+				if k := walk(n.Content[i]); k != "" {
+					return k
+				}
+			}
+		case yaml.SequenceNode:
+			for _, c := range n.Content {
+				if k := walk(c); k != "" {
+					return k
+				}
+			}
+		}
+		return ""
+	}
+
+	return walk(root)
 }
 
 func (r *Resolver) ResolveReferences(docContent string, uri string, line, col int) ([]protocol.Location, error) {
@@ -465,6 +533,11 @@ func (r *Resolver) ResolveReferences(docContent string, uri string, line, col in
 				}
 			}
 
+			ns := findNamespace(&node)
+			if ns == "" {
+				ns = "default"
+			}
+
 			// Check if we are at a definition site (Symbol)
 			for _, sym := range r.Config.Symbols {
 				for _, def := range sym.Definitions {
@@ -479,7 +552,7 @@ func (r *Resolver) ResolveReferences(docContent string, uri string, line, col in
 							labelKey := path[len(path)-1]
 							labelValue := targetNode.Value
 							log.Debug().Str("key", labelKey).Str("value", labelValue).Msg("Finding references for label definition")
-							locs := r.findLabelReferences(labelKey, labelValue)
+							locs := r.findLabelReferences(ns, labelKey, labelValue)
 							return filterOutLocationAtPosition(locs, uri, line, col), nil
 						}
 					}
@@ -509,7 +582,7 @@ func (r *Resolver) ResolveReferences(docContent string, uri string, line, col in
 						labelKey := path[len(path)-1]
 						labelValue := targetNode.Value
 						log.Debug().Str("key", labelKey).Str("value", labelValue).Msg("Finding references for label usage")
-						locs := r.findLabelReferences(labelKey, labelValue)
+						locs := r.findLabelReferences(ns, labelKey, labelValue)
 						return filterOutLocationAtPosition(locs, uri, line, col), nil
 					}
 				}
@@ -954,9 +1027,9 @@ func findDocumentLocalScalarRefs(root *yaml.Node, uri string, value string, patt
 		}
 	}
 
-		walk(root, []string{})
-		return locs
-	}
+	walk(root, []string{})
+	return locs
+}
 
 func resolveKeyFromItems(items *yaml.Node, subPath string) (string, bool) {
 	// If items is not specified, filename defaults to key.
@@ -1329,13 +1402,37 @@ func calculateOriginRange(node *yaml.Node) protocol.Range {
 	}
 }
 
-func (r *Resolver) findWorkloadsByLabel(key, value string, originRange protocol.Range) []protocol.LocationLink {
+func (r *Resolver) findWorkloadsByLabel(namespace, key, value string, originRange protocol.Range) []protocol.LocationLink {
 	var links []protocol.LocationLink
+	if namespace == "" {
+		namespace = "default"
+	}
 	resources := r.Store.FindByLabel(key, value)
 	for _, res := range resources {
+		resNS := res.Namespace
+		if resNS == "" {
+			resNS = "default"
+		}
+		if resNS != namespace {
+			continue
+		}
+
+		// Prefer pointing to the exact label value node in the target file.
 		targetRange := protocol.Range{
 			Start: protocol.Position{Line: uint32(res.Line), Character: uint32(res.Col)},
 			End:   protocol.Position{Line: uint32(res.Line), Character: uint32(res.Col + len(res.Name))},
+		}
+		for _, ld := range res.LabelDefs {
+			if ld.Key == key && ld.Value == value {
+				targetRange = protocol.Range{
+					Start: protocol.Position{Line: uint32(ld.Line), Character: uint32(ld.Col)},
+					End:   protocol.Position{Line: uint32(ld.Line), Character: uint32(ld.Col + len(ld.Value))},
+				}
+				break
+			}
+		}
+		if labelNode, err := findResourceLabelValueInFile(res.FilePath, res.Kind, resNS, res.Name, key, value); err == nil && labelNode != nil {
+			targetRange = scalarRange(labelNode)
 		}
 		links = append(links, protocol.LocationLink{
 			OriginSelectionRange: &originRange,
@@ -1345,6 +1442,80 @@ func (r *Resolver) findWorkloadsByLabel(key, value string, originRange protocol.
 		})
 	}
 	return links
+}
+
+func findResourceLabelValueInFile(filePath, kind, namespace, name, labelKey, labelValue string) (*yaml.Node, error) {
+	if filePath == "" {
+		return nil, nil
+	}
+	data, err := os.ReadFile(filePath)
+	if err != nil {
+		return nil, err
+	}
+
+	decoder := yaml.NewDecoder(bytes.NewReader(data))
+	for {
+		var doc yaml.Node
+		if err := decoder.Decode(&doc); err != nil {
+			if err == io.EOF {
+				break
+			}
+			return nil, err
+		}
+		if doc.Kind != yaml.DocumentNode || len(doc.Content) == 0 {
+			continue
+		}
+		root := doc.Content[0]
+		if root == nil || root.Kind != yaml.MappingNode {
+			continue
+		}
+
+		if findKind(root) != kind {
+			continue
+		}
+		if findName(root) != name {
+			continue
+		}
+		ns := findNamespace(root)
+		if ns == "" {
+			ns = "default"
+		}
+		if namespace != "" && ns != namespace {
+			continue
+		}
+
+		// metadata.labels
+		if meta := getMappingValue(root, "metadata"); meta != nil {
+			if labels := getMappingValue(meta, "labels"); labels != nil && labels.Kind == yaml.MappingNode {
+				for i := 0; i < len(labels.Content); i += 2 {
+					k := labels.Content[i]
+					v := labels.Content[i+1]
+					if k != nil && v != nil && k.Value == labelKey && v.Kind == yaml.ScalarNode && v.Value == labelValue {
+						return v, nil
+					}
+				}
+			}
+		}
+
+		// spec.template.metadata.labels
+		if spec := getMappingValue(root, "spec"); spec != nil {
+			if tmpl := getMappingValue(spec, "template"); tmpl != nil {
+				if meta := getMappingValue(tmpl, "metadata"); meta != nil {
+					if labels := getMappingValue(meta, "labels"); labels != nil && labels.Kind == yaml.MappingNode {
+						for i := 0; i < len(labels.Content); i += 2 {
+							k := labels.Content[i]
+							v := labels.Content[i+1]
+							if k != nil && v != nil && k.Value == labelKey && v.Kind == yaml.ScalarNode && v.Value == labelValue {
+								return v, nil
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+
+	return nil, nil
 }
 
 func (r *Resolver) findServiceByName(name string, originRange protocol.Range) []protocol.LocationLink {
@@ -1389,6 +1560,7 @@ func (r *Resolver) findNamespaceByName(name string, originRange protocol.Range) 
 	}
 	return nil
 }
+
 // Helper functions for path checking
 
 func isServiceSelector(path []string) bool {
@@ -1603,12 +1775,22 @@ func matchPathPrefix(current []string, pattern string) bool {
 	return true
 }
 
-func (r *Resolver) findLabelReferences(key, value string) []protocol.Location {
+func (r *Resolver) findLabelReferences(namespace, key, value string) []protocol.Location {
 	var locations []protocol.Location
+	if namespace == "" {
+		namespace = "default"
+	}
 
 	// 1. Find definitions (resources having this label)
 	resources := r.Store.FindByLabel(key, value)
 	for _, res := range resources {
+		resNS := res.Namespace
+		if resNS == "" {
+			resNS = "default"
+		}
+		if resNS != namespace {
+			continue
+		}
 		locations = append(locations, protocol.Location{
 			URI: filePathToURI(res.FilePath),
 			Range: protocol.Range{
@@ -1619,10 +1801,17 @@ func (r *Resolver) findLabelReferences(key, value string) []protocol.Location {
 	}
 
 	// 2. Find usages (resources referencing this label)
-	refs := r.Store.FindLabelReferences(value)
+	refs := r.Store.FindLabelReferencesByKeyValue(key, value)
 	for _, res := range refs {
+		resNS := res.Namespace
+		if resNS == "" {
+			resNS = "default"
+		}
+		if resNS != namespace {
+			continue
+		}
 		for _, ref := range res.References {
-			if ref.Symbol == "k8s.label" && ref.Name == value {
+			if ref.Symbol == "k8s.label" && ref.Name == value && (ref.Key == "" || ref.Key == key) {
 				locations = append(locations, protocol.Location{
 					URI: filePathToURI(res.FilePath),
 					Range: protocol.Range{

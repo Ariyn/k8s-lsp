@@ -16,12 +16,20 @@ type Reference struct {
 	Col       int
 }
 
+type LabelDefinition struct {
+	Key   string
+	Value string
+	Line  int
+	Col   int
+}
+
 type K8sResource struct {
 	ApiVersion string
 	Kind       string
 	Name       string
 	Namespace  string
 	Labels     map[string]string
+	LabelDefs  []LabelDefinition
 	References []Reference
 	FilePath   string
 	Line       int // 0-based line number
@@ -103,6 +111,30 @@ func (s *Store) FindLabelReferences(value string) []*K8sResource {
 				results = append(results, res)
 				break
 			}
+		}
+	}
+	return results
+}
+
+// FindLabelReferencesByKeyValue returns resources that reference a label selector key/value.
+// Backward compatible: if stored references have empty Key, matches by value only.
+func (s *Store) FindLabelReferencesByKeyValue(key, value string) []*K8sResource {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	var results []*K8sResource
+	for _, res := range s.resources {
+		for _, ref := range res.References {
+			if ref.Symbol != "k8s.label" {
+				continue
+			}
+			if ref.Name != value {
+				continue
+			}
+			if ref.Key != "" && ref.Key != key {
+				continue
+			}
+			results = append(results, res)
+			break
 		}
 	}
 	return results

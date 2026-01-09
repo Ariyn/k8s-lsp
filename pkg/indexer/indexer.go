@@ -150,6 +150,14 @@ func (i *Indexer) parseK8sResource(node *yaml.Node, path string) *K8sResource {
 									lKey := n.Content[k]
 									lVal := n.Content[k+1]
 									res.Labels[lKey.Value] = lVal.Value
+									if lVal != nil && lVal.Kind == yaml.ScalarNode {
+										res.LabelDefs = append(res.LabelDefs, LabelDefinition{
+											Key:   lKey.Value,
+											Value: lVal.Value,
+											Line:  lVal.Line - 1,
+											Col:   lVal.Column - 1,
+										})
+									}
 								}
 							}
 						}
@@ -168,9 +176,10 @@ func (i *Indexer) parseK8sResource(node *yaml.Node, path string) *K8sResource {
 					// Special handling for label selectors (Map)
 					if refRule.Symbol == "k8s.label" && n.Kind == yaml.MappingNode {
 						for k := 0; k < len(n.Content); k += 2 {
-							_ = n.Content[k] // lKey unused
+							lKey := n.Content[k]
 							lVal := n.Content[k+1]
 							res.References = append(res.References, Reference{
+								Key:    lKey.Value,
 								Name:   lVal.Value,
 								Symbol: refRule.Symbol,
 								Line:   lVal.Line - 1,
@@ -198,6 +207,9 @@ func (i *Indexer) parseK8sResource(node *yaml.Node, path string) *K8sResource {
 		// (e.g. configMapKeyRef.name + configMapKeyRef.key).
 		// This is intentionally not driven by rules because we need to correlate fields.
 		res.References = append(res.References, extractConfigMapReferences(root, kind, normalizeNamespace(res.Namespace))...)
+		// Special-case indexing for label selectors that use matchExpressions.
+		// This is not driven by rules because matchExpressions is a list of objects and needs correlation.
+		res.References = append(res.References, extractLabelSelectorMatchExpressionsReferences(root, kind, normalizeNamespace(res.Namespace))...)
 		res.References = dedupeReferences(res.References)
 
 		if res.Name != "" {
@@ -205,6 +217,80 @@ func (i *Indexer) parseK8sResource(node *yaml.Node, path string) *K8sResource {
 		}
 	}
 	return nil
+}
+
+func extractLabelSelectorMatchExpressionsReferences(root *yaml.Node, kind string, resourceNamespace string) []Reference {
+	// Today we only index operator: In (value-specific).
+	// This supports "Find References" from a label value to selectors.
+	var selector *yaml.Node
+
+	// Helper to reach nested maps safely.
+	get := func(n *yaml.Node, keys ...string) *yaml.Node {
+		cur := n
+		for _, k := range keys {
+			cur = getMapValue(cur, k)
+			if cur == nil {
+				return nil
+			}
+		}
+		return cur
+	}
+
+	switch kind {
+	case "Deployment", "StatefulSet", "DaemonSet", "ReplicaSet":
+		selector = get(root, "spec", "selector")
+	case "NetworkPolicy":
+		selector = get(root, "spec", "podSelector")
+	case "PodDisruptionBudget":
+		selector = get(root, "spec", "selector")
+	default:
+		return nil
+	}
+
+	if selector == nil || selector.Kind != yaml.MappingNode {
+		return nil
+	}
+
+	matchExprs := getMapValue(selector, "matchExpressions")
+	if matchExprs == nil {
+		return nil
+	}
+
+	var refs []Reference
+	for _, expr := range asSequence(matchExprs) {
+		if expr == nil || expr.Kind != yaml.MappingNode {
+			continue
+		}
+		keyNode := getMapValue(expr, "key")
+		opNode := getMapValue(expr, "operator")
+		valuesNode := getMapValue(expr, "values")
+		if keyNode == nil || keyNode.Kind != yaml.ScalarNode {
+			continue
+		}
+		if opNode == nil || opNode.Kind != yaml.ScalarNode {
+			continue
+		}
+		if opNode.Value != "In" {
+			continue
+		}
+
+		for _, v := range asSequence(valuesNode) {
+			if v == nil || v.Kind != yaml.ScalarNode {
+				continue
+			}
+			refs = append(refs, Reference{
+				Kind:      "Pod",
+				Namespace: resourceNamespace,
+				Symbol:    "k8s.label",
+				Key:       keyNode.Value,
+				Name:      v.Value,
+				Line:      v.Line - 1,
+				Col:       v.Column - 1,
+			})
+		}
+	}
+
+	return refs
 }
 
 func normalizeNamespace(ns string) string {

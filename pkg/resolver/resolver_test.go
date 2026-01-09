@@ -433,6 +433,7 @@ func TestResolveLabelReferences(t *testing.T) {
 		References: []indexer.Reference{
 			{
 				Kind:   "Pod",
+				Key:    "app",
 				Name:   "my-app", // The value of the label
 				Symbol: "k8s.label",
 				Line:   10,
@@ -493,6 +494,344 @@ spec:
 
 	if locs[0].URI != "file:///tmp/service.yaml" {
 		t.Errorf("Expected URI file:///tmp/service.yaml, got %s", locs[0].URI)
+	}
+}
+
+func TestResolveReferences_DeploymentTemplateLabelValue_FindsSelectors(t *testing.T) {
+	cfg := &config.Config{
+		Symbols: []config.Symbol{
+			{
+				Name: "k8s.resource.name",
+				Definitions: []config.SymbolDefinition{
+					{
+						Kinds: []string{"Deployment", "Service", "PodDisruptionBudget"},
+						Path:  "metadata.name",
+					},
+				},
+			},
+			{
+				Name: "k8s.label",
+				Definitions: []config.SymbolDefinition{
+					{
+						Kinds: []string{"Deployment"},
+						Path:  "spec.template.metadata.labels",
+					},
+				},
+			},
+		},
+		References: []config.Reference{
+			{
+				Name:       "service-selector",
+				Symbol:     "k8s.label",
+				TargetKind: "Pod",
+				Match: config.ReferenceMatch{
+					Kinds: []string{"Service"},
+					Path:  "spec.selector",
+				},
+			},
+			{
+				Name:       "workload-selector",
+				Symbol:     "k8s.label",
+				TargetKind: "Pod",
+				Match: config.ReferenceMatch{
+					Kinds: []string{"Deployment"},
+					Path:  "spec.selector.matchLabels",
+				},
+			},
+		},
+	}
+
+	store := indexer.NewStore()
+	idx := indexer.NewIndexer(store, cfg)
+
+	deployPath := "/tmp/deploy.yaml"
+	servicePath := "/tmp/svc.yaml"
+	pdbPath := "/tmp/pdb.yaml"
+	deployURI := "file:///tmp/deploy.yaml"
+
+	deploymentYaml := strings.TrimLeft(`
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: demo
+  namespace: default
+spec:
+  selector:
+    matchLabels:
+      app: pocketbase
+  template:
+    metadata:
+      labels:
+        app: pocketbase
+    spec:
+      containers:
+      - name: app
+        image: nginx
+`, "\n")
+
+	serviceYaml := strings.TrimLeft(`
+apiVersion: v1
+kind: Service
+metadata:
+  name: demo-svc
+  namespace: default
+spec:
+  selector:
+    app: pocketbase
+  ports:
+  - port: 80
+    targetPort: 80
+`, "\n")
+
+	pdbYaml := strings.TrimLeft(`
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: demo-pdb
+  namespace: default
+spec:
+  selector:
+    matchExpressions:
+    - key: app
+      operator: In
+      values:
+      - pocketbase
+`, "\n")
+
+	idx.IndexContent(deployPath, deploymentYaml)
+	idx.IndexContent(servicePath, serviceYaml)
+	idx.IndexContent(pdbPath, pdbYaml)
+
+	// ResolveDefinition uses res.FilePath to locate the exact label value node.
+	if err := os.WriteFile(deployPath, []byte(deploymentYaml), 0o644); err != nil {
+		t.Fatalf("failed to write deploy fixture: %v", err)
+	}
+	if err := os.WriteFile(servicePath, []byte(serviceYaml), 0o644); err != nil {
+		t.Fatalf("failed to write service fixture: %v", err)
+	}
+	if err := os.WriteFile(pdbPath, []byte(pdbYaml), 0o644); err != nil {
+		t.Fatalf("failed to write pdb fixture: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = os.Remove(deployPath)
+		_ = os.Remove(servicePath)
+		_ = os.Remove(pdbPath)
+	})
+
+	if n, err := findResourceLabelValueInFile(deployPath, "Deployment", "default", "demo", "app", "pocketbase"); err != nil {
+		t.Fatalf("findResourceLabelValueInFile failed: %v", err)
+	} else if n == nil {
+		t.Fatalf("expected to find template label value node in deploy fixture")
+	}
+	for _, res := range store.FindByLabel("app", "pocketbase") {
+		t.Logf("store.FindByLabel: kind=%s name=%s ns=%s path=%s", res.Kind, res.Name, res.Namespace, res.FilePath)
+	}
+
+	// Resolver definition resolution reads from res.FilePath to locate the exact label node.
+	// Write these fixtures to disk.
+	if err := os.WriteFile(deployPath, []byte(deploymentYaml), 0o644); err != nil {
+		t.Fatalf("failed to write deploy fixture: %v", err)
+	}
+	if err := os.WriteFile(servicePath, []byte(serviceYaml), 0o644); err != nil {
+		t.Fatalf("failed to write service fixture: %v", err)
+	}
+	if err := os.WriteFile(pdbPath, []byte(pdbYaml), 0o644); err != nil {
+		t.Fatalf("failed to write pdb fixture: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = os.Remove(deployPath)
+		_ = os.Remove(servicePath)
+		_ = os.Remove(pdbPath)
+	})
+
+	r := NewResolver(store, cfg)
+
+	// Cursor on template label value: "pocketbase"
+	// Line with "app: pocketbase" under spec.template.metadata.labels is line 12 (0-based).
+	// Indent: "        app: " is 13 columns (0-based start for value at 13).
+	line := 12
+	col := 13
+
+	locs, err := r.ResolveReferences(deploymentYaml, deployURI, line, col)
+	if err != nil {
+		t.Fatalf("ResolveReferences failed: %v", err)
+	}
+
+	// Expect at least:
+	// - Deployment spec.selector.matchLabels.app value
+	// - Service spec.selector.app value
+	// - PDB spec.selector.matchExpressions[].values[] value
+	if len(locs) < 3 {
+		t.Fatalf("Expected at least 3 locations, got %d", len(locs))
+	}
+
+	foundPdb := false
+	for _, loc := range locs {
+		if loc.URI == "file:///tmp/pdb.yaml" {
+			foundPdb = true
+			break
+		}
+	}
+	if !foundPdb {
+		t.Fatalf("Expected to find PodDisruptionBudget matchExpressions reference")
+	}
+}
+
+func TestResolveDefinition_SelectorValue_GoesToDeploymentTemplateLabel(t *testing.T) {
+	cfg := &config.Config{
+		Symbols: []config.Symbol{
+			{
+				Name: "k8s.resource.name",
+				Definitions: []config.SymbolDefinition{
+					{Kinds: []string{"Deployment", "Service", "PodDisruptionBudget"}, Path: "metadata.name"},
+				},
+			},
+			{
+				Name: "k8s.label",
+				Definitions: []config.SymbolDefinition{
+					{Kinds: []string{"Deployment"}, Path: "spec.template.metadata.labels"},
+				},
+			},
+		},
+		References: []config.Reference{
+			{
+				Name:       "service-selector",
+				Symbol:     "k8s.label",
+				TargetKind: "Pod",
+				Match:      config.ReferenceMatch{Kinds: []string{"Service"}, Path: "spec.selector"},
+			},
+			{
+				Name:       "workload-selector-matchLabels",
+				Symbol:     "k8s.label",
+				TargetKind: "Pod",
+				Match:      config.ReferenceMatch{Kinds: []string{"Deployment"}, Path: "spec.selector.matchLabels"},
+			},
+			{
+				Name:       "pdb-selector-matchExpressions",
+				Symbol:     "k8s.label",
+				TargetKind: "Pod",
+				Match:      config.ReferenceMatch{Kinds: []string{"PodDisruptionBudget"}, Path: "spec.selector.matchExpressions"},
+			},
+		},
+	}
+
+	store := indexer.NewStore()
+	idx := indexer.NewIndexer(store, cfg)
+
+	deployPath := "/tmp/def-deploy.yaml"
+	servicePath := "/tmp/def-svc.yaml"
+	pdbPath := "/tmp/def-pdb.yaml"
+	deployURI := "file:///tmp/def-deploy.yaml"
+	serviceURI := "file:///tmp/def-svc.yaml"
+	pdbURI := "file:///tmp/def-pdb.yaml"
+
+	deploymentYaml := strings.TrimLeft(`
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: demo
+  namespace: default
+spec:
+  selector:
+    matchLabels:
+      app: pocketbase
+  template:
+    metadata:
+      labels:
+        app: pocketbase
+    spec:
+      containers:
+      - name: app
+        image: nginx
+`, "\n")
+
+	serviceYaml := strings.TrimLeft(`
+apiVersion: v1
+kind: Service
+metadata:
+  name: demo-svc
+  namespace: default
+spec:
+  selector:
+    app: pocketbase
+  ports:
+  - port: 80
+    targetPort: 80
+`, "\n")
+
+	pdbYaml := strings.TrimLeft(`
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: demo-pdb
+  namespace: default
+spec:
+  selector:
+    matchExpressions:
+    - key: app
+      operator: In
+      values:
+      - pocketbase
+`, "\n")
+
+	idx.IndexContent(deployPath, deploymentYaml)
+	idx.IndexContent(servicePath, serviceYaml)
+	idx.IndexContent(pdbPath, pdbYaml)
+
+	r := NewResolver(store, cfg)
+
+	// 1) Service selector value -> Deployment template label value
+	// In serviceYaml: line with "app: pocketbase" under spec.selector is line 7 (0-based)
+	locs, err := r.ResolveDefinition(serviceYaml, serviceURI, 7, 9)
+	if err != nil {
+		t.Fatalf("ResolveDefinition failed: %v", err)
+	}
+	foundDeploy := false
+	for _, l := range locs {
+		if l.TargetURI == deployURI {
+			foundDeploy = true
+			break
+		}
+	}
+	if !foundDeploy {
+		t.Fatalf("Expected to find deployment label definition from service selector")
+	}
+
+	// 2) Deployment selector.matchLabels value -> Deployment template label value
+	// In deploymentYaml: selector matchLabels value line is 8 (0-based), value starts at col 11
+	locs, err = r.ResolveDefinition(deploymentYaml, deployURI, 8, 11)
+	if err != nil {
+		t.Fatalf("ResolveDefinition failed: %v", err)
+	}
+	foundSelfTemplateLabel := false
+	for _, l := range locs {
+		if l.TargetURI == deployURI && l.TargetRange.Start.Line == 12 {
+			foundSelfTemplateLabel = true
+			break
+		}
+	}
+	if !foundSelfTemplateLabel {
+		for _, l := range locs {
+			t.Logf("got link: target=%s start=%d:%d end=%d:%d", l.TargetURI, l.TargetRange.Start.Line, l.TargetRange.Start.Character, l.TargetRange.End.Line, l.TargetRange.End.Character)
+		}
+		t.Fatalf("Expected to find template label definition from workload selector.matchLabels")
+	}
+
+	// 3) PDB matchExpressions values[] -> Deployment template label value
+	// In pdbYaml: values item "pocketbase" is line 11 (0-based), starts at col 8
+	locs, err = r.ResolveDefinition(pdbYaml, pdbURI, 11, 8)
+	if err != nil {
+		t.Fatalf("ResolveDefinition failed: %v", err)
+	}
+	foundDeployFromPdb := false
+	for _, l := range locs {
+		if l.TargetURI == deployURI {
+			foundDeployFromPdb = true
+			break
+		}
+	}
+	if !foundDeployFromPdb {
+		t.Fatalf("Expected to find deployment label definition from PDB matchExpressions")
 	}
 }
 
