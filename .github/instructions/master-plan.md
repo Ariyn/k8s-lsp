@@ -3,6 +3,10 @@
 이 문서는 Kubernetes YAML 파일을 위한 Language Server Protocol (LSP) 서버 구현을 위한 마스터 플랜입니다.
 핵심 목표는 **Go to Definition(정의로 이동)**과 **Go to Usage(사용처 찾기)** 기능을 구현하는 것입니다.
 
+## 작업 진행 규칙
+- 작업을 시작할 때 [.github/instructions/todo.md](todo.md)에 적힌 할 일을 먼저 읽는다.
+- 각 할 일을 완료할 때마다 [.github/instructions/todo.md](todo.md)를 즉시 업데이트한다(체크/메모/남은 작업 정리).
+
 ## 1. 프로젝트 개요 (Project Overview)
 - **목표**: Kubernetes 리소스 간의 관계를 이해하고 탐색할 수 있는 LSP 서버 개발.
 - **핵심 기능**:
