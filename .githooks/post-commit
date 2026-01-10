@@ -1,0 +1,60 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Auto-bump VS Code extension patch version after every commit.
+# NOTE: post-commit runs after the commit is created, so this hook creates
+# an additional commit that only bumps the version.
+
+if [[ "${K8S_LSP_SKIP_POST_COMMIT_BUMP:-}" == "1" ]]; then
+  exit 0
+fi
+
+ROOT_DIR="$(git rev-parse --show-toplevel 2>/dev/null || true)"
+if [[ -z "${ROOT_DIR}" ]]; then
+  exit 0
+fi
+
+CLIENT_DIR="${ROOT_DIR}/client"
+PACKAGE_JSON="${CLIENT_DIR}/package.json"
+if [[ ! -f "${PACKAGE_JSON}" ]]; then
+  exit 0
+fi
+
+# If the last commit already touched the version files, don't bump again.
+if git show --name-only --pretty=format: HEAD | grep -qE '^client/(package\.json|package-lock\.json)$'; then
+  exit 0
+fi
+
+# If nothing is committed yet (detached/initial), be conservative.
+if ! git rev-parse --verify HEAD >/dev/null 2>&1; then
+  exit 0
+fi
+
+if ! command -v npm >/dev/null 2>&1; then
+  echo "post-commit: npm not found; cannot bump client version" >&2
+  exit 1
+fi
+
+# Bump patch version (do not create a git tag) and commit it.
+pushd "${CLIENT_DIR}" >/dev/null
+npm version patch --no-git-tag-version --force >/dev/null
+popd >/dev/null
+
+# Stage and commit the bump.
+git add "client/package.json" || true
+if [[ -f "${CLIENT_DIR}/package-lock.json" ]]; then
+  git add "client/package-lock.json" || true
+fi
+
+# If nothing ended up changed (unexpected), do nothing.
+if git diff --cached --quiet; then
+  exit 0
+fi
+
+NEW_VERSION="$(node -p "require('./client/package.json').version" 2>/dev/null || echo "")"
+MSG="chore: bump client version"
+if [[ -n "${NEW_VERSION}" ]]; then
+  MSG="chore: bump client version to v${NEW_VERSION}"
+fi
+
+K8S_LSP_SKIP_POST_COMMIT_BUMP=1 git commit -m "${MSG}" --no-verify >/dev/null
