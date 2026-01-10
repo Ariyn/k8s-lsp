@@ -114,6 +114,8 @@ func main() {
 		TextDocumentReferences:         textDocumentReferences,
 		TextDocumentCompletion:         textDocumentCompletion,
 		TextDocumentHover:              textDocumentHover,
+		TextDocumentCodeAction:         textDocumentCodeAction,
+		TextDocumentRename:             textDocumentRename,
 		TextDocumentDidSave:            textDocumentDidSave,
 		WorkspaceDidChangeWatchedFiles: workspaceDidChangeWatchedFiles,
 		WorkspaceExecuteCommand:        workspaceExecuteCommand,
@@ -136,6 +138,10 @@ func initialize(context *glsp.Context, params *protocol.InitializeParams) (any, 
 		CompletionProvider: &protocol.CompletionOptions{
 			TriggerCharacters: []string{":", " "},
 		},
+		CodeActionProvider: &protocol.CodeActionOptions{
+			CodeActionKinds: []protocol.CodeActionKind{protocol.CodeActionKindQuickFix},
+		},
+		RenameProvider: &protocol.RenameOptions{},
 		ExecuteCommandProvider: &protocol.ExecuteCommandOptions{
 			Commands: []string{"k8s.embeddedContent", "k8s.saveEmbeddedContent"},
 		},

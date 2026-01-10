@@ -118,26 +118,37 @@ func findNodes(root *yaml.Node, path string) []*yaml.Node {
 	parts := strings.Split(path, ".")
 
 	for _, part := range parts {
+		key, expandSeq := normalizePathPart(part)
 		var nextNodes []*yaml.Node
 		for _, node := range currentNodes {
 			if node.Kind == yaml.MappingNode {
 				for i := 0; i < len(node.Content); i += 2 {
-					if node.Content[i].Value == part {
-						nextNodes = append(nextNodes, node.Content[i+1])
+					if node.Content[i].Value == key {
+						val := node.Content[i+1]
+						if expandSeq && val != nil && val.Kind == yaml.SequenceNode {
+							nextNodes = append(nextNodes, val.Content...)
+						} else {
+							nextNodes = append(nextNodes, val)
+						}
 					}
 				}
 			} else if node.Kind == yaml.SequenceNode {
 				// If we encounter a sequence, we check all elements
 				// If the part is "*", we just collect all elements
-				if part == "*" {
+				if key == "*" {
 					nextNodes = append(nextNodes, node.Content...)
 				} else {
 					// Otherwise, we assume the elements are maps and we look for the key 'part'
 					for _, child := range node.Content {
 						if child.Kind == yaml.MappingNode {
 							for i := 0; i < len(child.Content); i += 2 {
-								if child.Content[i].Value == part {
-									nextNodes = append(nextNodes, child.Content[i+1])
+								if child.Content[i].Value == key {
+									val := child.Content[i+1]
+									if expandSeq && val != nil && val.Kind == yaml.SequenceNode {
+										nextNodes = append(nextNodes, val.Content...)
+									} else {
+										nextNodes = append(nextNodes, val)
+									}
 								}
 							}
 						}
@@ -153,6 +164,19 @@ func findNodes(root *yaml.Node, path string) []*yaml.Node {
 	return currentNodes
 }
 
+func normalizePathPart(part string) (key string, expandSeq bool) {
+	key = part
+	if strings.HasSuffix(key, "[*]") {
+		key = strings.TrimSuffix(key, "[*]")
+		return key, true
+	}
+	if strings.HasSuffix(key, "[]") {
+		key = strings.TrimSuffix(key, "[]")
+		return key, true
+	}
+	return key, false
+}
+
 func (v *Validator) checkReference(uri string, root *yaml.Node, check Check, namespace string) []protocol.Diagnostic {
 	nodes := findNodes(root, check.Path)
 	if len(nodes) == 0 {
@@ -166,6 +190,10 @@ func (v *Validator) checkReference(uri string, root *yaml.Node, check Check, nam
 			// Single value reference (e.g. Service Name, ConfigMap Name)
 			targetName := node.Value
 			found := v.store.Get(check.TargetKind, namespace, targetName)
+			if found == nil && isClusterScopedKind(check.TargetKind) {
+				// Store defaults empty/cluster-scoped namespaces to "default".
+				found = v.store.Get(check.TargetKind, "default", targetName)
+			}
 
 			if found == nil {
 				startLine := node.Line - 1
@@ -209,6 +237,20 @@ func (v *Validator) checkReference(uri string, root *yaml.Node, check Check, nam
 					}
 				}
 				if match {
+					// Enforce namespace when selector is namespaced.
+					resNS := res.Namespace
+					if resNS == "" {
+						resNS = "default"
+					}
+					if namespace != "" {
+						ns := namespace
+						if ns == "" {
+							ns = "default"
+						}
+						if resNS != ns {
+							continue
+						}
+					}
 					found = true
 					break
 				}
@@ -237,6 +279,15 @@ func (v *Validator) checkReference(uri string, root *yaml.Node, check Check, nam
 	}
 
 	return diagnostics
+}
+
+func isClusterScopedKind(kind string) bool {
+	switch kind {
+	case "Namespace", "Node", "PersistentVolume", "StorageClass", "ClusterRole", "ClusterRoleBinding", "CustomResourceDefinition":
+		return true
+	default:
+		return false
+	}
 }
 
 func (v *Validator) checkResourceMatch(uri string, root *yaml.Node, check Check, namespace string) []protocol.Diagnostic {

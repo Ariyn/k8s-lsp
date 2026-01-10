@@ -18,7 +18,7 @@
   - 기대효과: 커스텀 리소스도 즉시 인식(동적 kind 등록과 결합)
 
 ## P1 (UX 개선)
-- [ ] Rename / Code Action(Quick Fix)
+- [x] Rename / Code Action(Quick Fix)
   - 예: 존재하지 않는 참조(Secret/ConfigMap/Service 등)에 대해 후보 제안 또는 생성 안내
 
 - [ ] Document Symbol / Workspace Symbol
