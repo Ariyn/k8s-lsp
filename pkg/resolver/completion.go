@@ -1,6 +1,7 @@
 package resolver
 
 import (
+	"k8s-lsp/pkg/indexer"
 	"k8s-lsp/pkg/yamlstream"
 
 	"github.com/rs/zerolog/log"
@@ -69,7 +70,7 @@ func (r *Resolver) completionInDoc(docNode *yaml.Node, line1, col1 int) ([]proto
 				for _, res := range resources {
 					label := res.Name
 					kind := protocol.CompletionItemKindReference
-					detail := "Namespace: " + res.Namespace
+					detail := indexer.FormatResourceID(targetKind, res.Namespace, res.Name)
 
 					items = append(items, protocol.CompletionItem{
 						Label:  label,

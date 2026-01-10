@@ -77,7 +77,7 @@ spec:
 		t.Fatal("Expected hover, got nil")
 	}
 
-	expectedContent := "**my-service**\n\nKind: Service\nNamespace: default\nFile: /tmp/service.yaml"
+	expectedContent := "**Service default/my-service**\n\nKind: Service\nNamespace: default\nFile: /tmp/service.yaml"
 
 	contents, ok := hover.Contents.(protocol.MarkupContent)
 	if !ok {
@@ -153,7 +153,7 @@ spec:
 	if !ok {
 		t.Fatalf("Expected MarkupContent, got %T", hover.Contents)
 	}
-	if !strings.Contains(contents.Value, "**my-service**") {
-		t.Fatalf("Expected hover to mention my-service, got %q", contents.Value)
+	if !strings.Contains(contents.Value, "**Service default/my-service**") {
+		t.Fatalf("Expected hover to mention Service default/my-service, got %q", contents.Value)
 	}
 }

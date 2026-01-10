@@ -110,6 +110,7 @@ func main() {
 		SetTrace:                       setTrace,
 		TextDocumentDidOpen:            textDocumentDidOpen,
 		TextDocumentDidChange:          textDocumentDidChange,
+		TextDocumentDocumentSymbol:     textDocumentDocumentSymbol,
 		TextDocumentDefinition:         textDocumentDefinition,
 		TextDocumentReferences:         textDocumentReferences,
 		TextDocumentCompletion:         textDocumentCompletion,
@@ -118,6 +119,7 @@ func main() {
 		TextDocumentRename:             textDocumentRename,
 		TextDocumentDidSave:            textDocumentDidSave,
 		WorkspaceDidChangeWatchedFiles: workspaceDidChangeWatchedFiles,
+		WorkspaceSymbol:                workspaceSymbol,
 		WorkspaceExecuteCommand:        workspaceExecuteCommand,
 	}
 
@@ -132,9 +134,11 @@ func main() {
 
 func initialize(context *glsp.Context, params *protocol.InitializeParams) (any, error) {
 	capabilities := protocol.ServerCapabilities{
-		TextDocumentSync:   protocol.TextDocumentSyncKindFull,
-		DefinitionProvider: true,
-		ReferencesProvider: true,
+		TextDocumentSync:        protocol.TextDocumentSyncKindFull,
+		DefinitionProvider:      true,
+		ReferencesProvider:      true,
+		DocumentSymbolProvider:  true,
+		WorkspaceSymbolProvider: true,
 		CompletionProvider: &protocol.CompletionOptions{
 			TriggerCharacters: []string{":", " "},
 		},
@@ -252,12 +256,17 @@ func textDocumentDidOpen(context *glsp.Context, params *protocol.DidOpenTextDocu
 		state.YAMLCache.InvalidateURI(params.TextDocument.URI)
 	}
 
-	// Index the content to support dynamic updates (e.g. new CRDs)
-	path := uriToPath(params.TextDocument.URI)
-	state.Store.RemoveByFilePath(path)
-	state.Indexer.IndexContent(path, params.TextDocument.Text)
+	// Workspace index/store mutations only apply to file:// URIs.
+	// Non-file URIs (e.g. k8s-embedded://, untitled:) are supported for document-local features,
+	// but must not pollute the workspace store.
+	if path, ok := fileURIPath(params.TextDocument.URI); ok {
+		state.Store.RemoveByFilePath(path)
+		state.Indexer.IndexContent(path, params.TextDocument.Text)
+	}
 
-	go publishDiagnostics(context, params.TextDocument.URI, params.TextDocument.Text)
+	if context != nil {
+		go publishDiagnostics(context, params.TextDocument.URI, params.TextDocument.Text)
+	}
 	return nil
 }
 
@@ -272,12 +281,15 @@ func textDocumentDidChange(context *glsp.Context, params *protocol.DidChangeText
 				state.YAMLCache.InvalidateURI(params.TextDocument.URI)
 			}
 
-			// Index the content
-			path := uriToPath(params.TextDocument.URI)
-			state.Store.RemoveByFilePath(path)
-			state.Indexer.IndexContent(path, change.Text)
+			// Workspace index/store mutations only apply to file:// URIs.
+			if path, ok := fileURIPath(params.TextDocument.URI); ok {
+				state.Store.RemoveByFilePath(path)
+				state.Indexer.IndexContent(path, change.Text)
+			}
 
-			go publishDiagnostics(context, params.TextDocument.URI, change.Text)
+			if context != nil {
+				go publishDiagnostics(context, params.TextDocument.URI, change.Text)
+			}
 		} else {
 			// Fallback or log error if type assertion fails
 			// In some versions it might be TextDocumentContentChangeEventWhole
@@ -288,12 +300,15 @@ func textDocumentDidChange(context *glsp.Context, params *protocol.DidChangeText
 					state.YAMLCache.InvalidateURI(params.TextDocument.URI)
 				}
 
-				// Index the content
-				path := uriToPath(params.TextDocument.URI)
-				state.Store.RemoveByFilePath(path)
-				state.Indexer.IndexContent(path, changeWhole.Text)
+				// Workspace index/store mutations only apply to file:// URIs.
+				if path, ok := fileURIPath(params.TextDocument.URI); ok {
+					state.Store.RemoveByFilePath(path)
+					state.Indexer.IndexContent(path, changeWhole.Text)
+				}
 
-				go publishDiagnostics(context, params.TextDocument.URI, changeWhole.Text)
+				if context != nil {
+					go publishDiagnostics(context, params.TextDocument.URI, changeWhole.Text)
+				}
 			}
 		}
 	}
@@ -309,8 +324,10 @@ func workspaceDidChangeWatchedFiles(context *glsp.Context, params *protocol.DidC
 	for _, change := range params.Changes {
 		uri := string(change.URI)
 		log.Debug().Str("uri", uri).Int("type", int(change.Type)).Msg("Watched file changed")
-
-		path := uriToPath(uri)
+		path, ok := fileURIPath(uri)
+		if !ok {
+			continue
+		}
 		ext := strings.ToLower(filepath.Ext(path))
 		if ext != ".yaml" && ext != ".yml" {
 			continue
@@ -330,10 +347,12 @@ func workspaceDidChangeWatchedFiles(context *glsp.Context, params *protocol.DidC
 					}
 					delete(state.Documents, uri)
 					delete(state.DocVersion, uri)
-					context.Notify("textDocument/publishDiagnostics", protocol.PublishDiagnosticsParams{
-						URI:         uri,
-						Diagnostics: []protocol.Diagnostic{},
-					})
+					if context != nil {
+						context.Notify("textDocument/publishDiagnostics", protocol.PublishDiagnosticsParams{
+							URI:         uri,
+							Diagnostics: []protocol.Diagnostic{},
+						})
+					}
 					continue
 				}
 				content = string(b)
@@ -346,7 +365,9 @@ func workspaceDidChangeWatchedFiles(context *glsp.Context, params *protocol.DidC
 			}
 			state.Store.RemoveByFilePath(path)
 			state.Indexer.IndexContent(path, content)
-			go publishDiagnostics(context, uri, content)
+			if context != nil {
+				go publishDiagnostics(context, uri, content)
+			}
 
 		case protocol.FileChangeTypeDeleted:
 			state.Store.RemoveByFilePath(path)
@@ -355,19 +376,30 @@ func workspaceDidChangeWatchedFiles(context *glsp.Context, params *protocol.DidC
 			}
 			delete(state.Documents, uri)
 			delete(state.DocVersion, uri)
-			context.Notify("textDocument/publishDiagnostics", protocol.PublishDiagnosticsParams{
-				URI:         uri,
-				Diagnostics: []protocol.Diagnostic{},
-			})
+			if context != nil {
+				context.Notify("textDocument/publishDiagnostics", protocol.PublishDiagnosticsParams{
+					URI:         uri,
+					Diagnostics: []protocol.Diagnostic{},
+				})
+			}
 		}
 	}
 	return nil
 }
 
-func uriToPath(uri string) string {
+func fileURIPath(uri string) (string, bool) {
 	parsed, err := url.Parse(uri)
-	if err == nil && parsed.Scheme == "file" {
-		return parsed.Path
+	if err != nil || parsed.Scheme != "file" {
+		return "", false
+	}
+	return parsed.Path, true
+}
+
+// uriToPath converts file:// URIs to filesystem paths, otherwise returns the input.
+// Use this for non-indexing path computations only.
+func uriToPath(uri string) string {
+	if p, ok := fileURIPath(uri); ok {
+		return p
 	}
 	return uri
 }
@@ -539,6 +571,9 @@ func textDocumentCompletion(context *glsp.Context, params *protocol.CompletionPa
 }
 
 func publishDiagnostics(context *glsp.Context, uri string, content string) {
+	if context == nil {
+		return
+	}
 	if state.Validator == nil {
 		return
 	}

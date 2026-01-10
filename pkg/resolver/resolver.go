@@ -148,8 +148,9 @@ func (r *Resolver) ResolveHover(docContent string, uri string, line, col int) (*
 							res = r.Store.Get(targetKind, "default", targetNode.Value)
 						}
 						if res != nil {
+							display := indexer.FormatResourceID(res.Kind, res.Namespace, res.Name)
 							contents := fmt.Sprintf("**%s**\n\nKind: %s\nNamespace: %s\nFile: %s",
-								res.Name, res.Kind, res.Namespace, res.FilePath)
+								display, res.Kind, res.Namespace, res.FilePath)
 
 							return &protocol.Hover{
 								Contents: protocol.MarkupContent{
@@ -284,8 +285,9 @@ func (r *Resolver) resolveHoverInDoc(docNode *yaml.Node, uri string, line0, col0
 					res = r.Store.Get(targetKind, "default", targetNode.Value)
 				}
 				if res != nil {
+					display := indexer.FormatResourceID(res.Kind, res.Namespace, res.Name)
 					contents := fmt.Sprintf("**%s**\n\nKind: %s\nNamespace: %s\nFile: %s",
-						res.Name, res.Kind, res.Namespace, res.FilePath)
+						display, res.Kind, res.Namespace, res.FilePath)
 
 					return &protocol.Hover{
 						Contents: protocol.MarkupContent{
@@ -510,7 +512,6 @@ func (r *Resolver) ResolveReferencesStream(stream *yamlstream.Stream, uri string
 
 	return nil, nil
 }
-
 
 func (r *Resolver) resolveReferencesInDoc(docNode *yaml.Node, uri string, line, col int) ([]protocol.Location, bool, error) {
 	if docNode == nil {

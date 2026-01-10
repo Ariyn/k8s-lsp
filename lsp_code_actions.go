@@ -19,7 +19,7 @@ import (
 )
 
 var (
-	reRefNotFound = regexp.MustCompile(`\(Kind:\s*([^,\)]+),\s*Name:\s*([^\)]+)\)\s*$`)
+	reRefNotFound      = regexp.MustCompile(`\(Kind:\s*([^,\)]+),\s*Name:\s*([^\)]+)\)\s*$`)
 	reResourceMismatch = regexp.MustCompile(`^([^:]+):\s*([^\s]+)\s*\(([^\)]*)\)\s*!=\s*([^\s]+)\s*\(([^\)]*)\)\s*$`)
 )
 
@@ -131,7 +131,7 @@ func buildReplaceWithExistingActions(uri string, diag protocol.Diagnostic, targe
 		return nil
 	}
 
-	clusterScoped := isClusterScopedKind(targetKind)
+	clusterScoped := indexer.IsClusterScopedKind(targetKind)
 
 	var filtered []*indexer.K8sResource
 	for _, res := range candidates {
@@ -142,7 +142,7 @@ func buildReplaceWithExistingActions(uri string, diag protocol.Diagnostic, targe
 			filtered = append(filtered, res)
 			continue
 		}
-		if normalizeNamespace(res.Namespace) == normalizeNamespace(currentNamespace) {
+		if indexer.NormalizeNamespace(res.Namespace) == indexer.NormalizeNamespace(currentNamespace) {
 			filtered = append(filtered, res)
 		}
 	}
@@ -162,9 +162,10 @@ func buildReplaceWithExistingActions(uri string, diag protocol.Diagnostic, targe
 	for i, res := range filtered {
 		repl := protocol.TextEdit{Range: diag.Range, NewText: res.Name}
 		ed := protocol.WorkspaceEdit{Changes: map[string][]protocol.TextEdit{uri: {repl}}}
+		display := indexer.FormatResourceID(targetKind, res.Namespace, res.Name)
 
 		a := protocol.CodeAction{
-			Title:       fmt.Sprintf("Replace with %s '%s'", targetKind, res.Name),
+			Title:       fmt.Sprintf("Replace with %s", display),
 			Kind:        &kindQuickFix,
 			Diagnostics: []protocol.Diagnostic{diag},
 			Edit:        &ed,
@@ -198,9 +199,10 @@ func buildCreateMissingResourceAction(uri string, docContent string, diag protoc
 	kindQuickFix := protocol.CodeActionKindQuickFix
 	preferred := true
 	ws := protocol.WorkspaceEdit{Changes: map[string][]protocol.TextEdit{uri: {edit}}}
+	display := indexer.FormatResourceID(missingKind, currentNamespace, missingName)
 
 	ca := protocol.CodeAction{
-		Title:       fmt.Sprintf("Create %s '%s'", missingKind, missingName),
+		Title:       fmt.Sprintf("Create %s", display),
 		Kind:        &kindQuickFix,
 		Diagnostics: []protocol.Diagnostic{diag},
 		IsPreferred: &preferred,
@@ -221,13 +223,13 @@ func buildFixAllAction(uri string, docContent string, stream *yamlstream.Stream,
 			continue
 		}
 		candidates := state.Store.ListByKind(kind)
-		clusterScoped := isClusterScopedKind(kind)
+		clusterScoped := indexer.IsClusterScopedKind(kind)
 		var filtered []string
 		for _, res := range candidates {
 			if res == nil || res.Name == "" {
 				continue
 			}
-			if clusterScoped || normalizeNamespace(res.Namespace) == normalizeNamespace(currentNamespace) {
+			if clusterScoped || indexer.NormalizeNamespace(res.Namespace) == indexer.NormalizeNamespace(currentNamespace) {
 				filtered = append(filtered, res.Name)
 			}
 		}
@@ -381,7 +383,7 @@ func buildSelectorFixActions(uri string, content string, stream *yamlstream.Stre
 		if d == nil || d.Name == "" {
 			continue
 		}
-		if normalizeNamespace(d.Namespace) != normalizeNamespace(currentNamespace) {
+		if indexer.NormalizeNamespace(d.Namespace) != indexer.NormalizeNamespace(currentNamespace) {
 			continue
 		}
 		if len(d.Labels) == 0 {
@@ -408,8 +410,9 @@ func buildSelectorFixActions(uri string, content string, stream *yamlstream.Stre
 	for i, d := range candidates {
 		repl := protocol.TextEdit{Range: protocol.Range{Start: *start, End: *end}, NewText: renderMapping(d.Labels, selectorNode.Column-1)}
 		ws := protocol.WorkspaceEdit{Changes: map[string][]protocol.TextEdit{uri: {repl}}}
+		display := indexer.FormatResourceID("Deployment", d.Namespace, d.Name)
 		a := protocol.CodeAction{
-			Title:       fmt.Sprintf("Set selector to match Deployment '%s'", d.Name),
+			Title:       fmt.Sprintf("Set selector to match %s", display),
 			Kind:        &kindQuickFix,
 			Diagnostics: []protocol.Diagnostic{diag},
 			Edit:        &ws,
@@ -547,9 +550,9 @@ func findResourceDoc(stream *yamlstream.Stream, kind string, name string, namesp
 		if n != name {
 			continue
 		}
-		if !isClusterScopedKind(kind) {
+		if !indexer.IsClusterScopedKind(kind) {
 			ns := findYAMLString(docNode, "metadata", "namespace")
-			if normalizeNamespace(ns) != normalizeNamespace(namespace) {
+			if indexer.NormalizeNamespace(ns) != indexer.NormalizeNamespace(namespace) {
 				continue
 			}
 		}
@@ -744,8 +747,8 @@ func resourceStubYAML(kind, name, namespace string) (string, bool) {
 		return "", false
 	}
 
-	ns := normalizeNamespace(namespace)
-	useNamespace := !isClusterScopedKind(kind)
+	ns := indexer.NormalizeNamespace(namespace)
+	useNamespace := !indexer.IsClusterScopedKind(kind)
 
 	switch kind {
 	case "ConfigMap":
@@ -866,22 +869,6 @@ func yamlMapValue(node *yaml.Node, key string) *yaml.Node {
 		}
 	}
 	return nil
-}
-
-func normalizeNamespace(ns string) string {
-	if strings.TrimSpace(ns) == "" {
-		return "default"
-	}
-	return ns
-}
-
-func isClusterScopedKind(kind string) bool {
-	switch kind {
-	case "Namespace", "Node", "PersistentVolume", "StorageClass", "ClusterRole", "ClusterRoleBinding", "CustomResourceDefinition":
-		return true
-	default:
-		return false
-	}
 }
 
 func uriDir(uri string) string {

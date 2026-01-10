@@ -190,7 +190,7 @@ func (v *Validator) checkReference(uri string, root *yaml.Node, check Check, nam
 			// Single value reference (e.g. Service Name, ConfigMap Name)
 			targetName := node.Value
 			found := v.store.Get(check.TargetKind, namespace, targetName)
-			if found == nil && isClusterScopedKind(check.TargetKind) {
+			if found == nil && indexer.IsClusterScopedKind(check.TargetKind) {
 				// Store defaults empty/cluster-scoped namespaces to "default".
 				found = v.store.Get(check.TargetKind, "default", targetName)
 			}
@@ -279,15 +279,6 @@ func (v *Validator) checkReference(uri string, root *yaml.Node, check Check, nam
 	}
 
 	return diagnostics
-}
-
-func isClusterScopedKind(kind string) bool {
-	switch kind {
-	case "Namespace", "Node", "PersistentVolume", "StorageClass", "ClusterRole", "ClusterRoleBinding", "CustomResourceDefinition":
-		return true
-	default:
-		return false
-	}
 }
 
 func (v *Validator) checkResourceMatch(uri string, root *yaml.Node, check Check, namespace string) []protocol.Diagnostic {

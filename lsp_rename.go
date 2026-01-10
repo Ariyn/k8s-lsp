@@ -9,6 +9,7 @@ import (
 	"sort"
 	"strings"
 
+	"k8s-lsp/pkg/indexer"
 	"k8s-lsp/pkg/yamlstream"
 
 	"github.com/rs/zerolog/log"
@@ -115,7 +116,7 @@ func symbolContextAt(stream *yamlstream.Stream, line0, col0 int) (*renameContext
 	}
 
 	docNamespace := findYAMLString(doc.Node, "metadata", "namespace")
-	scopeNamespace := normalizeNamespace(docNamespace)
+	scopeNamespace := indexer.NormalizeNamespace(docNamespace)
 
 	// Definition rename (metadata.name)
 	if len(path) == 2 && path[0] == "metadata" && path[1] == "name" {
@@ -123,7 +124,7 @@ func symbolContextAt(stream *yamlstream.Stream, line0, col0 int) (*renameContext
 			kind:           docKind,
 			oldName:        node.Value,
 			scopeNamespace: scopeNamespace,
-			clusterScoped:  isClusterScopedKind(docKind),
+			clusterScoped:  indexer.IsClusterScopedKind(docKind),
 		}
 		if ctx.clusterScoped && ctx.kind == "PersistentVolume" {
 			connected := strings.TrimSpace(findYAMLString(doc.Node, "spec", "claimRef", "namespace"))
@@ -160,7 +161,7 @@ func symbolContextAt(stream *yamlstream.Stream, line0, col0 int) (*renameContext
 		kind:           refTargetKind,
 		oldName:        node.Value,
 		scopeNamespace: scopeNamespace,
-		clusterScoped:  isClusterScopedKind(refTargetKind),
+		clusterScoped:  indexer.IsClusterScopedKind(refTargetKind),
 	}
 	if ctx.clusterScoped && ctx.kind == "PersistentVolume" {
 		connected, err := persistentVolumeConnectedNamespace(ctx.oldName)
@@ -171,7 +172,7 @@ func symbolContextAt(stream *yamlstream.Stream, line0, col0 int) (*renameContext
 		if connected == "" {
 			return nil, errors.New("rename for PersistentVolume is only supported when it is bound to a PVC (spec.claimRef.namespace)")
 		}
-		if normalizeNamespace(scopeNamespace) != normalizeNamespace(connected) {
+		if indexer.NormalizeNamespace(scopeNamespace) != indexer.NormalizeNamespace(connected) {
 			return nil, errors.New("rename for PersistentVolume is only allowed within the bound PVC namespace")
 		}
 		ctx.scopeNamespace = connected
@@ -219,14 +220,14 @@ func buildRenameWorkspaceEdit(ctx *renameContext, newName string, scopeNamespace
 	// References (filtered by scopeNamespace).
 	refResources := state.Store.FindReferences(ctx.kind, oldName)
 	for _, res := range refResources {
-		resNS := normalizeNamespace(res.Namespace)
+		resNS := indexer.NormalizeNamespace(res.Namespace)
 		if !ctx.clusterScoped {
-			if resNS != normalizeNamespace(scopeNamespace) {
+			if resNS != indexer.NormalizeNamespace(scopeNamespace) {
 				continue
 			}
 		} else {
 			// cluster-scoped PV: only apply to connected namespace
-			if resNS != normalizeNamespace(scopeNamespace) {
+			if resNS != indexer.NormalizeNamespace(scopeNamespace) {
 				continue
 			}
 		}
@@ -309,6 +310,15 @@ func filePathToURI(path string) string {
 	}
 
 	normalized := filepath.ToSlash(path)
+
+	// Windows drive letter paths need a leading slash: /C:/Users/...
+	if len(normalized) >= 3 {
+		drive := normalized[0]
+		if ((drive >= 'A' && drive <= 'Z') || (drive >= 'a' && drive <= 'z')) && normalized[1] == ':' && normalized[2] == '/' {
+			normalized = "/" + normalized
+		}
+	}
+
 	u := url.URL{Scheme: "file", Path: normalized}
 	return u.String()
 }

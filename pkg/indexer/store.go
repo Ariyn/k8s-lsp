@@ -37,8 +37,8 @@ type K8sResource struct {
 }
 
 type Store struct {
-	resources  map[string]*K8sResource          // Key: "Kind/Namespace/Name"
-	keysByFile map[string]map[string]struct{}  // filePath -> set(resourceKey)
+	resources  map[string]*K8sResource        // Key: "Kind/Namespace/Name"
+	keysByFile map[string]map[string]struct{} // filePath -> set(resourceKey)
 	mu         sync.RWMutex
 }
 
@@ -201,6 +201,17 @@ func (s *Store) ListByKind(kind string) []*K8sResource {
 		if res.Kind == kind {
 			results = append(results, res)
 		}
+	}
+	return results
+}
+
+// ListAll returns a snapshot list of all indexed resources.
+func (s *Store) ListAll() []*K8sResource {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	results := make([]*K8sResource, 0, len(s.resources))
+	for _, res := range s.resources {
+		results = append(results, res)
 	}
 	return results
 }
