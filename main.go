@@ -248,6 +248,7 @@ func textDocumentDidOpen(context *glsp.Context, params *protocol.DidOpenTextDocu
 
 	// Index the content to support dynamic updates (e.g. new CRDs)
 	path := uriToPath(params.TextDocument.URI)
+	state.Store.RemoveByFilePath(path)
 	state.Indexer.IndexContent(path, params.TextDocument.Text)
 
 	go publishDiagnostics(context, params.TextDocument.URI, params.TextDocument.Text)
@@ -267,6 +268,7 @@ func textDocumentDidChange(context *glsp.Context, params *protocol.DidChangeText
 
 			// Index the content
 			path := uriToPath(params.TextDocument.URI)
+			state.Store.RemoveByFilePath(path)
 			state.Indexer.IndexContent(path, change.Text)
 
 			go publishDiagnostics(context, params.TextDocument.URI, change.Text)
@@ -282,6 +284,7 @@ func textDocumentDidChange(context *glsp.Context, params *protocol.DidChangeText
 
 				// Index the content
 				path := uriToPath(params.TextDocument.URI)
+				state.Store.RemoveByFilePath(path)
 				state.Indexer.IndexContent(path, changeWhole.Text)
 
 				go publishDiagnostics(context, params.TextDocument.URI, changeWhole.Text)
@@ -298,12 +301,59 @@ func textDocumentDidSave(context *glsp.Context, params *protocol.DidSaveTextDocu
 
 func workspaceDidChangeWatchedFiles(context *glsp.Context, params *protocol.DidChangeWatchedFilesParams) error {
 	for _, change := range params.Changes {
-		log.Debug().Str("uri", change.URI).Int("type", int(change.Type)).Msg("Watched file changed")
-		// TODO: Handle file events (Created, Changed, Deleted)
-		// For now, we just log.
-		// If we wanted to be correct, we should:
-		// 1. If Created/Changed: IndexFile(uriToPath(change.URI))
-		// 2. If Deleted: Remove resources from store (requires Store update to track by file)
+		uri := string(change.URI)
+		log.Debug().Str("uri", uri).Int("type", int(change.Type)).Msg("Watched file changed")
+
+		path := uriToPath(uri)
+		ext := strings.ToLower(filepath.Ext(path))
+		if ext != ".yaml" && ext != ".yml" {
+			continue
+		}
+
+		switch change.Type {
+		case protocol.FileChangeTypeCreated, protocol.FileChangeTypeChanged:
+			// Prefer in-memory content if the document is open/being edited.
+			content, ok := state.Documents[uri]
+			if !ok {
+				b, err := os.ReadFile(path)
+				if err != nil {
+					log.Warn().Err(err).Str("path", path).Msg("Failed to read changed file; treating as delete")
+					state.Store.RemoveByFilePath(path)
+					if state.YAMLCache != nil {
+						state.YAMLCache.InvalidateURI(uri)
+					}
+					delete(state.Documents, uri)
+					delete(state.DocVersion, uri)
+					context.Notify("textDocument/publishDiagnostics", protocol.PublishDiagnosticsParams{
+						URI:         uri,
+						Diagnostics: []protocol.Diagnostic{},
+					})
+					continue
+				}
+				content = string(b)
+				state.Documents[uri] = content
+				state.DocVersion[uri] = 0
+			}
+
+			if state.YAMLCache != nil {
+				state.YAMLCache.InvalidateURI(uri)
+			}
+			state.Store.RemoveByFilePath(path)
+			state.Indexer.IndexContent(path, content)
+			go publishDiagnostics(context, uri, content)
+
+		case protocol.FileChangeTypeDeleted:
+			state.Store.RemoveByFilePath(path)
+			if state.YAMLCache != nil {
+				state.YAMLCache.InvalidateURI(uri)
+			}
+			delete(state.Documents, uri)
+			delete(state.DocVersion, uri)
+			context.Notify("textDocument/publishDiagnostics", protocol.PublishDiagnosticsParams{
+				URI:         uri,
+				Diagnostics: []protocol.Diagnostic{},
+			})
+		}
 	}
 	return nil
 }

@@ -4,7 +4,7 @@
 완료한 항목은 체크하고, 필요하면 세부 작업/링크를 추가합니다.
 
 ## P0 (체감 효과 큼)
-- [ ] 워크스페이스 파일 변경 이벤트 반영
+- [x] 워크스페이스 파일 변경 이벤트 반영
   - 목표: `WorkspaceDidChangeWatchedFiles`에서 Created/Changed 시 재인덱싱, Deleted 시 Store에서 제거까지 반영
   - 기대효과: Definition/References/Diagnostics 정확도 개선
   - 비고: 삭제 반영을 위해 파일→리소스 역인덱스(또는 Store에 filePath별 목록) 필요

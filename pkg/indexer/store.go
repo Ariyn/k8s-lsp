@@ -37,13 +37,15 @@ type K8sResource struct {
 }
 
 type Store struct {
-	resources map[string]*K8sResource // Key: "Kind/Namespace/Name"
-	mu        sync.RWMutex
+	resources  map[string]*K8sResource          // Key: "Kind/Namespace/Name"
+	keysByFile map[string]map[string]struct{}  // filePath -> set(resourceKey)
+	mu         sync.RWMutex
 }
 
 func NewStore() *Store {
 	return &Store{
-		resources: make(map[string]*K8sResource),
+		resources:  make(map[string]*K8sResource),
+		keysByFile: make(map[string]map[string]struct{}),
 	}
 }
 
@@ -62,7 +64,58 @@ func (s *Store) Add(res *K8sResource) {
 	defer s.mu.Unlock()
 	key := makeKey(res.Kind, res.Namespace, res.Name)
 	log.Debug().Str("key", key).Msg("Adding resource to store")
+
+	// Keep file -> resourceKey reverse index in sync.
+	// If an existing resource key moves between files (or file path changes), update the mapping.
+	if prev, ok := s.resources[key]; ok && prev != nil {
+		prevPath := prev.FilePath
+		if prevPath != "" && prevPath != res.FilePath {
+			if set, ok := s.keysByFile[prevPath]; ok {
+				delete(set, key)
+				if len(set) == 0 {
+					delete(s.keysByFile, prevPath)
+				}
+			}
+		}
+	}
+
+	if res.FilePath != "" {
+		set, ok := s.keysByFile[res.FilePath]
+		if !ok {
+			set = make(map[string]struct{})
+			s.keysByFile[res.FilePath] = set
+		}
+		set[key] = struct{}{}
+	}
+
 	s.resources[key] = res
+}
+
+// RemoveByFilePath removes all resources that were indexed from the given file path.
+// Returns the number of removed resources.
+func (s *Store) RemoveByFilePath(path string) int {
+	if path == "" {
+		return 0
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	set, ok := s.keysByFile[path]
+	if !ok || len(set) == 0 {
+		delete(s.keysByFile, path)
+		return 0
+	}
+
+	removed := 0
+	for key := range set {
+		if _, exists := s.resources[key]; exists {
+			delete(s.resources, key)
+			removed++
+		}
+	}
+	delete(s.keysByFile, path)
+	return removed
 }
 
 func (s *Store) Get(kind, namespace, name string) *K8sResource {
