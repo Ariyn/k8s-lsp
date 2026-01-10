@@ -2,19 +2,35 @@
   "name": "k8s-lsp-client",
   "displayName": "Kubernetes LSP Client",
   "description": "VS Code Client for Kubernetes LSP",
-  "version": "0.1.4",
+  "version": "0.1.5",
   "publisher": "k8s-lsp",
+  "license": "SEE LICENSE IN LICENSE.md",
   "engines": {
     "vscode": "^1.82.0"
   },
   "repository": {
-    "url": "https://github.com/Ariyn/k8s-lsp"
+    "type": "git",
+    "url": "https://github.com/Ariyn/k8s-lsp",
+    "directory": "client"
   },
+  "bugs": {
+    "url": "https://github.com/Ariyn/k8s-lsp/issues"
+  },
+  "homepage": "https://github.com/Ariyn/k8s-lsp",
+  "keywords": [
+    "kubernetes",
+    "yaml",
+    "lsp",
+    "crd"
+  ],
   "categories": [
     "Programming Languages"
   ],
   "activationEvents": [
     "onLanguage:yaml"
+  ],
+  "extensionKind": [
+    "workspace"
   ],
   "main": "./out/extension.js",
   "contributes": {
@@ -49,6 +65,7 @@
       "title": "Kubernetes LSP",
       "properties": {
         "k8sLsp.crdSources": {
+          "scope": "resource",
           "type": "array",
           "default": [],
           "items": {
@@ -57,6 +74,7 @@
           "description": "List of URLs to Kubernetes CRD YAML manifests to download and index (e.g. Traefik CRDs)."
         },
         "k8sLsp.serverPath": {
+          "scope": "machine",
           "type": "string",
           "default": "k8s-lsp",
           "description": "Path to the k8s-lsp executable"
@@ -77,12 +95,16 @@
   },
   "scripts": {
     "vscode:prepublish": "npm run compile",
+    "clean": "rimraf out",
     "compile": "tsc -b",
-    "watch": "tsc -b -w"
+    "watch": "tsc -b -w",
+    "package": "vsce package"
   },
   "devDependencies": {
     "@types/node": "^20.0.0",
     "@types/vscode": "^1.82.0",
+    "@vscode/vsce": "^2.26.0",
+    "rimraf": "^5.0.5",
     "typescript": "^4.9.5"
   },
   "dependencies": {
