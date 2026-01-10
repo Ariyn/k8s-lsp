@@ -9,7 +9,7 @@
   - 기대효과: Definition/References/Diagnostics 정확도 개선
   - 비고: 삭제 반영을 위해 파일→리소스 역인덱스(또는 Store에 filePath별 목록) 필요
 
-- [ ] 다중 문서(`---`) 완전 지원
+- [x] 다중 문서(`---`) 완전 지원
   - 목표: Validator도 `yaml.Decoder`로 파일 내 모든 문서를 순회하며 진단 생성
   - 기대효과: 실제 K8s 매니페스트(여러 리소스 1파일)에서 진단 누락 감소
 

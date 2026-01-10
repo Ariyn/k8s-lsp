@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"k8s-lsp/pkg/indexer"
+	"k8s-lsp/pkg/yamlstream"
 
 	protocol "github.com/tliron/glsp/protocol_3_16"
 	"gopkg.in/yaml.v3"
@@ -54,47 +55,57 @@ func NewValidator(rulePath string, store *indexer.Store) (*Validator, error) {
 }
 
 func (v *Validator) Validate(uri string, content string) []protocol.Diagnostic {
-	var diagnostics []protocol.Diagnostic
+	stream, err := yamlstream.Parse(content)
+	if err != nil {
+		return nil
+	}
+	return v.ValidateStream(uri, stream)
+}
 
-	var docNode yaml.Node
-	if err := yaml.Unmarshal([]byte(content), &docNode); err != nil {
-		return diagnostics
+func (v *Validator) ValidateStream(uri string, stream *yamlstream.Stream) []protocol.Diagnostic {
+	if v == nil || stream == nil {
+		return nil
 	}
 
-	// Handle multiple documents in one file if necessary, but usually root is DocumentNode
-	// yaml.Unmarshal returns the first document if not using Decoder.
-	// But yaml.Node from Unmarshal is a DocumentNode.
+	var diagnostics []protocol.Diagnostic
+	for _, doc := range stream.Docs {
+		diagnostics = append(diagnostics, v.validateDoc(uri, doc.Node)...)
+	}
+	return diagnostics
+}
 
-	if docNode.Kind == yaml.DocumentNode && len(docNode.Content) > 0 {
-		root := docNode.Content[0]
-		if root.Kind == yaml.MappingNode {
-			kind := ""
-			kindNodes := findNodes(root, "kind")
-			if len(kindNodes) > 0 {
-				kind = kindNodes[0].Value
-			}
+func (v *Validator) validateDoc(uri string, docNode *yaml.Node) []protocol.Diagnostic {
+	if docNode == nil || docNode.Kind != yaml.DocumentNode || len(docNode.Content) == 0 {
+		return nil
+	}
+	root := docNode.Content[0]
+	if root == nil || root.Kind != yaml.MappingNode {
+		return nil
+	}
 
-			// Extract namespace
-			namespace := "default"
-			nsNodes := findNodes(root, "metadata.namespace")
-			if len(nsNodes) > 0 {
-				namespace = nsNodes[0].Value
-			}
+	kind := ""
+	kindNodes := findNodes(root, "kind")
+	if len(kindNodes) > 0 {
+		kind = kindNodes[0].Value
+	}
 
-			for _, rule := range v.rules {
-				if rule.Kind == kind {
-					for _, check := range rule.Checks {
-						if check.Type == "reference" {
-							if diags := v.checkReference(uri, root, check, namespace); len(diags) > 0 {
-								diagnostics = append(diagnostics, diags...)
-							}
-						} else if check.Type == "resource-match" {
-							if diags := v.checkResourceMatch(uri, root, check, namespace); len(diags) > 0 {
-								diagnostics = append(diagnostics, diags...)
-							}
-						}
-					}
-				}
+	namespace := "default"
+	nsNodes := findNodes(root, "metadata.namespace")
+	if len(nsNodes) > 0 {
+		namespace = nsNodes[0].Value
+	}
+
+	var diagnostics []protocol.Diagnostic
+	for _, rule := range v.rules {
+		if rule.Kind != kind {
+			continue
+		}
+		for _, check := range rule.Checks {
+			switch check.Type {
+			case "reference":
+				diagnostics = append(diagnostics, v.checkReference(uri, root, check, namespace)...)
+			case "resource-match":
+				diagnostics = append(diagnostics, v.checkResourceMatch(uri, root, check, namespace)...)
 			}
 		}
 	}

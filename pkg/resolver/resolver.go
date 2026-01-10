@@ -12,6 +12,7 @@ import (
 
 	"k8s-lsp/pkg/config"
 	"k8s-lsp/pkg/indexer"
+	"k8s-lsp/pkg/yamlstream"
 
 	"github.com/rs/zerolog/log"
 	protocol "github.com/tliron/glsp/protocol_3_16"
@@ -163,6 +164,495 @@ func (r *Resolver) ResolveHover(docContent string, uri string, line, col int) (*
 		}
 	}
 	return nil, nil
+}
+
+func (r *Resolver) ResolveHoverStream(stream *yamlstream.Stream, uri string, line, col int) (*protocol.Hover, error) {
+	if stream == nil {
+		return nil, nil
+	}
+
+	line1 := line + 1
+	col1 := col + 1
+
+	// Fast path: choose doc by span.
+	if doc := stream.DocForLine(line1); doc != nil {
+		h, err := r.resolveHoverInDoc(doc.Node, uri, line, col, line1, col1)
+		if h != nil || err != nil {
+			return h, err
+		}
+	}
+
+	// Fallback to preserve behavior when spans can't map separator lines cleanly.
+	for _, doc := range stream.Docs {
+		h, err := r.resolveHoverInDoc(doc.Node, uri, line, col, line1, col1)
+		if h != nil || err != nil {
+			return h, err
+		}
+	}
+
+	return nil, nil
+}
+
+func (r *Resolver) resolveHoverInDoc(docNode *yaml.Node, uri string, line0, col0, line1, col1 int) (*protocol.Hover, error) {
+	if docNode == nil {
+		return nil, nil
+	}
+
+	targetNode, parentNode, path := findNodeAt(docNode, line1, col1)
+	if targetNode == nil {
+		return nil, nil
+	}
+
+	kind := findKind(docNode)
+
+	// Check for ConfigMap embedded file
+	if kind == "ConfigMap" && len(path) >= 2 && (path[len(path)-2] == "data" || path[len(path)-2] == "binaryData") {
+		var valNode *yaml.Node
+		if parentNode != nil && parentNode.Kind == yaml.MappingNode {
+			for i := 0; i < len(parentNode.Content); i += 2 {
+				if parentNode.Content[i] == targetNode {
+					if i+1 < len(parentNode.Content) {
+						valNode = parentNode.Content[i+1]
+					}
+					break
+				}
+			}
+		}
+
+		if valNode != nil && (valNode.Style == yaml.LiteralStyle || valNode.Style == yaml.FoldedStyle) {
+			if strings.Contains(targetNode.Value, ".") {
+				currentNamespace := findNamespace(docNode)
+				if currentNamespace == "" {
+					currentNamespace = "default"
+				}
+				configMapName := findName(docNode)
+				if configMapName == "" {
+					configMapName = "configmap"
+				}
+
+				sourceEncoded := base64.URLEncoding.EncodeToString([]byte(uri))
+				keyEncoded := base64.URLEncoding.EncodeToString([]byte(targetNode.Value))
+
+				embeddedURI := fmt.Sprintf("k8s-embedded://%s/%s/%s?source=%s&key=%s",
+					currentNamespace, configMapName, targetNode.Value, sourceEncoded, keyEncoded)
+
+				openArgs := fmt.Sprintf(`{"uri":%q}`, embeddedURI)
+				openLink := "command:k8sLsp.openEmbeddedFile?" + url.QueryEscape(openArgs)
+
+				findArgs := fmt.Sprintf(`{"uri":%q,"position":{"line":%d,"character":%d}}`, uri, line0, col0)
+				findLink := "command:k8sLsp.findEmbeddedFileUsages?" + url.QueryEscape(findArgs)
+
+				contents := fmt.Sprintf(
+					"Embedded File: **%s**\n\n[Open File](%s) · [Find Usages](%s)",
+					targetNode.Value,
+					openLink,
+					findLink,
+				)
+
+				return &protocol.Hover{
+					Contents: protocol.MarkupContent{
+						Kind:  protocol.MarkupKindMarkdown,
+						Value: contents,
+					},
+				}, nil
+			}
+		}
+	}
+
+	currentNamespace := findNamespace(docNode)
+
+	for _, refRule := range r.Config.References {
+		if matchesKind(refRule.Match.Kinds, kind) && matchPath(path, refRule.Match.Path) {
+			if refRule.Symbol == "k8s.resource.name" {
+				targetKind := refRule.TargetKind
+				ns := currentNamespace
+				// Check for sibling namespace
+				if parentNode != nil && parentNode.Kind == yaml.MappingNode {
+					for k := 0; k < len(parentNode.Content); k += 2 {
+						if parentNode.Content[k].Value == "namespace" {
+							ns = parentNode.Content[k+1].Value
+							break
+						}
+					}
+				}
+				if targetKind == "Namespace" {
+					ns = ""
+				}
+
+				res := r.Store.Get(targetKind, ns, targetNode.Value)
+				if res == nil && targetKind != "Namespace" && ns != "default" {
+					res = r.Store.Get(targetKind, "default", targetNode.Value)
+				}
+				if res != nil {
+					contents := fmt.Sprintf("**%s**\n\nKind: %s\nNamespace: %s\nFile: %s",
+						res.Name, res.Kind, res.Namespace, res.FilePath)
+
+					return &protocol.Hover{
+						Contents: protocol.MarkupContent{
+							Kind:  protocol.MarkupKindMarkdown,
+							Value: contents,
+						},
+					}, nil
+				}
+			}
+		}
+	}
+
+	return nil, nil
+}
+
+func (r *Resolver) ResolveDefinitionStream(stream *yamlstream.Stream, uri string, line, col int) ([]protocol.LocationLink, error) {
+	if stream == nil {
+		return nil, nil
+	}
+	line1 := line + 1
+	col1 := col + 1
+
+	if doc := stream.DocForLine(line1); doc != nil {
+		locs, err := r.resolveDefinitionInDoc(doc.Node, uri, line, col, line1, col1)
+		if len(locs) > 0 || err != nil {
+			return locs, err
+		}
+	}
+	for _, doc := range stream.Docs {
+		locs, err := r.resolveDefinitionInDoc(doc.Node, uri, line, col, line1, col1)
+		if len(locs) > 0 || err != nil {
+			return locs, err
+		}
+	}
+	return nil, nil
+}
+
+func (r *Resolver) resolveDefinitionInDoc(docNode *yaml.Node, uri string, line0, col0, line1, col1 int) ([]protocol.LocationLink, error) {
+	if docNode == nil {
+		return nil, nil
+	}
+
+	targetNode, parentNode, path := findNodeAt(docNode, line1, col1)
+	if targetNode == nil {
+		return nil, nil
+	}
+
+	originRange := calculateOriginRange(targetNode)
+
+	if isVolumeMountNamePath(path) {
+		podSpec := findPodSpecNode(docNode)
+		if podSpec != nil {
+			if volNameNode := findVolumeNameNodeByName(podSpec, targetNode.Value); volNameNode != nil {
+				targetRange := protocol.Range{
+					Start: protocol.Position{Line: uint32(volNameNode.Line - 1), Character: uint32(volNameNode.Column - 1)},
+					End:   protocol.Position{Line: uint32(volNameNode.Line - 1), Character: uint32(volNameNode.Column - 1 + len(volNameNode.Value))},
+				}
+				return []protocol.LocationLink{{
+					OriginSelectionRange: &originRange,
+					TargetURI:            uri,
+					TargetRange:          targetRange,
+					TargetSelectionRange: targetRange,
+				}}, nil
+			}
+		}
+	}
+
+	kind := findKind(docNode)
+	if kind == "ConfigMap" && len(path) >= 2 && (path[len(path)-2] == "data" || path[len(path)-2] == "binaryData") {
+		var valNode *yaml.Node
+		if parentNode != nil && parentNode.Kind == yaml.MappingNode {
+			for i := 0; i < len(parentNode.Content); i += 2 {
+				if parentNode.Content[i] == targetNode {
+					if i+1 < len(parentNode.Content) {
+						valNode = parentNode.Content[i+1]
+					}
+					break
+				}
+			}
+		}
+		if valNode != nil && (valNode.Style == yaml.LiteralStyle || valNode.Style == yaml.FoldedStyle) {
+			if strings.Contains(targetNode.Value, ".") {
+				currentNamespace := findNamespace(docNode)
+				if currentNamespace == "" {
+					currentNamespace = "default"
+				}
+				configMapName := findName(docNode)
+				if configMapName == "" {
+					configMapName = "configmap"
+				}
+
+				sourceEncoded := base64.URLEncoding.EncodeToString([]byte(uri))
+				keyEncoded := base64.URLEncoding.EncodeToString([]byte(targetNode.Value))
+
+				embeddedURI := fmt.Sprintf("k8s-embedded://%s/%s/%s?source=%s&key=%s",
+					currentNamespace, configMapName, targetNode.Value, sourceEncoded, keyEncoded)
+
+				targetRange := protocol.Range{
+					Start: protocol.Position{Line: 0, Character: 0},
+					End:   protocol.Position{Line: 0, Character: 0},
+				}
+
+				return []protocol.LocationLink{{
+					OriginSelectionRange: &originRange,
+					TargetURI:            embeddedURI,
+					TargetRange:          targetRange,
+					TargetSelectionRange: targetRange,
+				}}, nil
+			}
+		}
+	}
+
+	currentNamespace := findNamespace(docNode)
+
+	// Check if we are at a definition site (Symbol)
+	for _, sym := range r.Config.Symbols {
+		for _, def := range sym.Definitions {
+			if contains(def.Kinds, kind) && matchPath(path, def.Path) {
+				// We are at the definition. Return self.
+				targetRange := protocol.Range{
+					Start: protocol.Position{Line: uint32(targetNode.Line - 1), Character: uint32(targetNode.Column - 1)},
+					End:   protocol.Position{Line: uint32(targetNode.Line - 1), Character: uint32(targetNode.Column - 1 + len(targetNode.Value))},
+				}
+				return []protocol.LocationLink{{
+					OriginSelectionRange: &originRange,
+					TargetURI:            uri,
+					TargetRange:          targetRange,
+					TargetSelectionRange: targetRange,
+				}}, nil
+			}
+		}
+	}
+
+	for _, refRule := range r.Config.References {
+		isMatch := false
+		if refRule.Symbol == "k8s.label" {
+			isMatch = matchPathPrefix(path, refRule.Match.Path)
+		} else {
+			isMatch = matchPath(path, refRule.Match.Path)
+		}
+
+		if matchesKind(refRule.Match.Kinds, kind) && isMatch {
+			if refRule.Symbol == "k8s.label" {
+				ns := currentNamespace
+				if ns == "" {
+					ns = "default"
+				}
+
+				labelKey := path[len(path)-1]
+				labelValue := targetNode.Value
+				if labelKey == "values" && pathContains(path, "matchExpressions") {
+					if k := findMatchExpressionKeyForValue(docNode, targetNode); k != "" {
+						labelKey = k
+					}
+				}
+
+				return r.findWorkloadsByLabel(ns, labelKey, labelValue, originRange), nil
+			}
+			if refRule.Symbol == "k8s.resource.name" {
+				targetKind := refRule.TargetKind
+				if targetKind == "" {
+					continue
+				}
+
+				ns := currentNamespace
+				// Check for sibling namespace
+				if parentNode != nil && parentNode.Kind == yaml.MappingNode {
+					for k := 0; k < len(parentNode.Content); k += 2 {
+						if parentNode.Content[k].Value == "namespace" {
+							ns = parentNode.Content[k+1].Value
+							break
+						}
+					}
+				}
+				if targetKind == "Namespace" {
+					ns = ""
+				}
+
+				res := r.Store.Get(targetKind, ns, targetNode.Value)
+				if res == nil && targetKind != "Namespace" && ns != "default" {
+					res = r.Store.Get(targetKind, "default", targetNode.Value)
+				}
+				if res != nil {
+					targetRange := protocol.Range{
+						Start: protocol.Position{Line: uint32(res.Line), Character: uint32(res.Col)},
+						End:   protocol.Position{Line: uint32(res.Line), Character: uint32(res.Col + len(res.Name))},
+					}
+					return []protocol.LocationLink{{
+						OriginSelectionRange: &originRange,
+						TargetURI:            filePathToURI(res.FilePath),
+						TargetRange:          targetRange,
+						TargetSelectionRange: targetRange,
+					}}, nil
+				}
+			}
+		}
+	}
+
+	return nil, nil
+}
+
+func (r *Resolver) ResolveReferencesStream(stream *yamlstream.Stream, uri string, line, col int) ([]protocol.Location, error) {
+	if stream == nil {
+		return nil, nil
+	}
+
+	line1 := line + 1
+
+	if doc := stream.DocForLine(line1); doc != nil {
+		locs, ok, err := r.resolveReferencesInDoc(doc.Node, uri, line, col)
+		if ok || err != nil {
+			return locs, err
+		}
+	}
+
+	for _, doc := range stream.Docs {
+		locs, ok, err := r.resolveReferencesInDoc(doc.Node, uri, line, col)
+		if ok || err != nil {
+			return locs, err
+		}
+	}
+
+	return nil, nil
+}
+
+
+func (r *Resolver) resolveReferencesInDoc(docNode *yaml.Node, uri string, line, col int) ([]protocol.Location, bool, error) {
+	if docNode == nil {
+		return nil, false, nil
+	}
+
+	line1 := line + 1
+	col1 := col + 1
+
+	targetNode, parentNode, path := findNodeAt(docNode, line1, col1)
+	if targetNode == nil {
+		return nil, false, nil
+	}
+
+	// Special case: clicking volumeMounts[].subPath should open the References UI
+	// with multiple targets so the user can choose.
+	if isVolumeMountSubPathPath(path) {
+		locs := r.findVolumeMountSubPathTargets(docNode, parentNode, targetNode.Value)
+		if len(locs) > 0 {
+			return locs, true, nil
+		}
+	}
+
+	// Special case: ConfigMap embedded file usages.
+	kind := findKind(docNode)
+	if kind == "ConfigMap" && len(path) >= 2 && (path[len(path)-2] == "data" || path[len(path)-2] == "binaryData") {
+		var valNode *yaml.Node
+		if parentNode != nil && parentNode.Kind == yaml.MappingNode {
+			for i := 0; i < len(parentNode.Content); i += 2 {
+				if parentNode.Content[i] == targetNode {
+					if i+1 < len(parentNode.Content) {
+						valNode = parentNode.Content[i+1]
+					}
+					break
+				}
+			}
+		}
+
+		if valNode != nil && (valNode.Style == yaml.LiteralStyle || valNode.Style == yaml.FoldedStyle) && strings.Contains(targetNode.Value, ".") {
+			ns := findNamespace(docNode)
+			if ns == "" {
+				ns = "default"
+			}
+			cmName := findName(docNode)
+			if cmName == "" {
+				cmName = "configmap"
+			}
+
+			locs := r.findConfigMapEmbeddedFileUsages(ns, cmName, targetNode.Value)
+			return filterOutLocationAtPosition(locs, uri, line, col), true, nil
+		}
+	}
+
+	// Special case: PVC claimName -> volumeMount name usages (document-local).
+	if isWorkloadPVCClaimNamePath(path) {
+		locs := findPVCClaimMountUsagesInDocument(docNode, uri, targetNode.Value)
+		if len(locs) > 0 {
+			return filterOutLocationAtPosition(locs, uri, line, col), true, nil
+		}
+	}
+
+	// metadata.name definition site: find references for the resource.
+	if len(path) == 2 && path[0] == "metadata" && path[1] == "name" {
+		kind := findKind(docNode)
+		name := findName(docNode)
+		namespace := findNamespace(docNode)
+		if kind != "" && name != "" {
+			locs := r.findReferences(kind, name, namespace)
+			return filterOutLocationAtPosition(locs, uri, line, col), true, nil
+		}
+	}
+
+	// metadata.namespace: namespace references.
+	if len(path) == 2 && path[0] == "metadata" && path[1] == "namespace" {
+		namespaceName := targetNode.Value
+		locs := r.findReferences("Namespace", namespaceName, "")
+		return filterOutLocationAtPosition(locs, uri, line, col), true, nil
+	}
+
+	// Document-local references: volumes[].name <-> containers[].volumeMounts[].name
+	kind = findKind(docNode)
+	if volPatterns, ok := volumeNamePatternsForKind(kind); ok {
+		if matchesAnyPath(path, volPatterns) {
+			name := targetNode.Value
+			if name != "" {
+				return findDocumentLocalScalarRefs(docNode, uri, name, volPatterns), true, nil
+			}
+		}
+	}
+
+	ns := findNamespace(docNode)
+	if ns == "" {
+		ns = "default"
+	}
+
+	// Definition sites for labels.
+	for _, sym := range r.Config.Symbols {
+		for _, def := range sym.Definitions {
+			match := matchPath(path, def.Path)
+			if !match && sym.Name == "k8s.label" {
+				match = matchPathPrefix(path, def.Path)
+			}
+
+			if contains(def.Kinds, kind) && match {
+				if sym.Name == "k8s.label" {
+					labelKey := path[len(path)-1]
+					labelValue := targetNode.Value
+					locs := r.findLabelReferences(ns, labelKey, labelValue)
+					return filterOutLocationAtPosition(locs, uri, line, col), true, nil
+				}
+			}
+		}
+	}
+
+	for _, refRule := range r.Config.References {
+		match := matchPath(path, refRule.Match.Path)
+		if !match && refRule.Symbol == "k8s.label" {
+			match = matchPathPrefix(path, refRule.Match.Path)
+		}
+
+		if matchesKind(refRule.Match.Kinds, kind) && match {
+			if refRule.Symbol == "k8s.resource.name" {
+				targetKind := refRule.TargetKind
+				targetName := targetNode.Value
+				targetNamespace := ""
+				if targetKind != "Namespace" {
+					targetNamespace = findNamespace(docNode)
+				}
+
+				locs := r.findReferences(targetKind, targetName, targetNamespace)
+				return filterOutLocationAtPosition(locs, uri, line, col), true, nil
+			}
+			if refRule.Symbol == "k8s.label" {
+				labelKey := path[len(path)-1]
+				labelValue := targetNode.Value
+				locs := r.findLabelReferences(ns, labelKey, labelValue)
+				return filterOutLocationAtPosition(locs, uri, line, col), true, nil
+			}
+		}
+	}
+
+	return nil, true, nil
 }
 
 func (r *Resolver) ResolveDefinition(docContent string, uri string, line, col int) ([]protocol.LocationLink, error) {
@@ -1916,22 +2406,17 @@ func (r *Resolver) ResolveEmbeddedContent(docContent string, key string, nameAnd
 }
 
 func (r *Resolver) UpdateEmbeddedContent(docContent string, key string, newContent string) (string, error) {
-	var node yaml.Node
-	decoder := yaml.NewDecoder(strings.NewReader(docContent))
-	if err := decoder.Decode(&node); err != nil {
+	stream, err := yamlstream.Parse(docContent)
+	if err != nil {
 		return "", err
 	}
+	return r.UpdateEmbeddedContentStream(stream, key, newContent)
+}
 
-	found := false
-	if node.Kind != yaml.DocumentNode || len(node.Content) == 0 {
+func (r *Resolver) UpdateEmbeddedContentStream(stream *yamlstream.Stream, key string, newContent string) (string, error) {
+	if stream == nil || len(stream.Docs) == 0 {
 		return "", fmt.Errorf("invalid yaml document")
 	}
-	root := node.Content[0]
-	if root == nil || root.Kind != yaml.MappingNode {
-		return "", fmt.Errorf("invalid yaml root")
-	}
-
-	kind := findKind(root)
 
 	// Normalize line endings to \n.
 	normalized := strings.ReplaceAll(newContent, "\r\n", "\n")
@@ -1943,64 +2428,86 @@ func (r *Resolver) UpdateEmbeddedContent(docContent string, key string, newConte
 	normalized = strings.Join(lines, "\n")
 	normalized = strings.TrimSuffix(normalized, "\n")
 
-	updateInSection := func(section string, newVal string, style yaml.Style) bool {
-		for i := 0; i < len(root.Content); i += 2 {
-			if root.Content[i].Value != section {
-				continue
-			}
-			m := root.Content[i+1]
-			if m == nil || m.Kind != yaml.MappingNode {
-				return false
-			}
-			m.Style = 0
-			for j := 0; j < len(m.Content); j += 2 {
-				if m.Content[j].Value == key {
-					valNode := m.Content[j+1]
-					if valNode == nil {
-						return false
+	updateInDoc := func(docNode *yaml.Node) bool {
+		if docNode == nil || docNode.Kind != yaml.DocumentNode || len(docNode.Content) == 0 {
+			return false
+		}
+		root := docNode.Content[0]
+		if root == nil || root.Kind != yaml.MappingNode {
+			return false
+		}
+
+		kind := findKind(root)
+		updateInSection := func(section string, newVal string, style yaml.Style) bool {
+			for i := 0; i < len(root.Content); i += 2 {
+				if root.Content[i].Value != section {
+					continue
+				}
+				m := root.Content[i+1]
+				if m == nil || m.Kind != yaml.MappingNode {
+					return false
+				}
+				m.Style = 0
+				for j := 0; j < len(m.Content); j += 2 {
+					if m.Content[j].Value == key {
+						valNode := m.Content[j+1]
+						if valNode == nil {
+							return false
+						}
+						valNode.Value = newVal
+						valNode.Style = style
+						return true
 					}
-					valNode.Value = newVal
-					valNode.Style = style
-					return true
 				}
 			}
+			return false
+		}
+
+		if kind == "ConfigMap" {
+			if updateInSection("data", normalized, yaml.LiteralStyle) {
+				return true
+			}
+			if updateInSection("binaryData", normalized, 0) {
+				return true
+			}
+			return false
+		}
+		if kind == "Secret" {
+			if updateInSection("stringData", normalized, yaml.LiteralStyle) {
+				return true
+			}
+			encoded := base64.StdEncoding.EncodeToString([]byte(normalized))
+			if updateInSection("data", encoded, 0) {
+				return true
+			}
+			return false
 		}
 		return false
 	}
 
-	if kind == "ConfigMap" {
-		if updateInSection("data", normalized, yaml.LiteralStyle) {
-			found = true
-		} else if updateInSection("binaryData", normalized, 0) {
-			found = true
-		}
-	} else if kind == "Secret" {
-		// Prefer stringData when present.
-		if updateInSection("stringData", normalized, yaml.LiteralStyle) {
-			found = true
-		} else {
-			encoded := base64.StdEncoding.EncodeToString([]byte(normalized))
-			if updateInSection("data", encoded, 0) {
-				found = true
-			}
+	updated := false
+	for i := range stream.Docs {
+		if updateInDoc(stream.Docs[i].Node) {
+			updated = true
+			break
 		}
 	}
-
-	if !found {
+	if !updated {
 		return "", fmt.Errorf("key %s not found", key)
 	}
-
-	log.Info().Str("key", key).Str("buf", fmt.Sprintf("%v", node)).Msg("Updated embedded content in ConfigMap")
 
 	var buf bytes.Buffer
 	encoder := yaml.NewEncoder(&buf)
 	encoder.SetIndent(2)
 	defer encoder.Close()
-	if err := encoder.Encode(&node); err != nil {
-		return "", err
+	for _, doc := range stream.Docs {
+		if doc.Node == nil {
+			continue
+		}
+		if err := encoder.Encode(doc.Node); err != nil {
+			return "", err
+		}
 	}
-
-	log.Info().Str("buf", buf.String()).Msg("Serialized updated ConfigMap content")
 
 	return buf.String(), nil
 }

@@ -8,6 +8,7 @@ import (
 
 	"k8s-lsp/pkg/config"
 	"k8s-lsp/pkg/indexer"
+	"k8s-lsp/pkg/yamlstream"
 
 	"gopkg.in/yaml.v3"
 )
@@ -82,6 +83,70 @@ spec:
 	}
 	if locs[0].TargetRange.Start.Line != 0 {
 		t.Errorf("Expected TargetRange.Start.Line 0, got %d", locs[0].TargetRange.Start.Line)
+	}
+}
+
+func TestResolveDefinitionStream_MultiDoc_SecondDocument(t *testing.T) {
+	cfg := &config.Config{
+		References: []config.Reference{
+			{
+				Name:       "service-ref",
+				Symbol:     "k8s.resource.name",
+				TargetKind: "Service",
+				Match: config.ReferenceMatch{
+					Kinds: []string{"Deployment"},
+					Path:  "spec.template.spec.containers.env.valueFrom.configMapKeyRef.name",
+				},
+			},
+		},
+	}
+
+	store := indexer.NewStore()
+	store.Add(&indexer.K8sResource{Kind: "Service", Name: "my-service", Namespace: "default", FilePath: "/tmp/service.yaml", Line: 0, Col: 0})
+
+	r := NewResolver(store, cfg)
+
+	yamlContent := `
+apiVersion: v1
+kind: Service
+metadata:
+  name: other
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: my-deployment
+spec:
+  template:
+    spec:
+      containers:
+      - name: my-container
+        env:
+        - name: MY_CONFIG
+          valueFrom:
+            configMapKeyRef:
+              name: my-service
+              key: some-key
+`
+
+	stream, err := yamlstream.Parse(yamlContent)
+	if err != nil {
+		t.Fatalf("Parse failed: %v", err)
+	}
+
+	uri := "file:///tmp/deployment.yaml"
+	line := 19
+	col := 20
+
+	locs, err := r.ResolveDefinitionStream(stream, uri, line, col)
+	if err != nil {
+		t.Fatalf("ResolveDefinitionStream failed: %v", err)
+	}
+	if len(locs) != 1 {
+		t.Fatalf("Expected 1 location, got %d", len(locs))
+	}
+	if locs[0].TargetURI != "file:///tmp/service.yaml" {
+		t.Fatalf("Expected TargetURI file:///tmp/service.yaml, got %s", locs[0].TargetURI)
 	}
 }
 
@@ -299,6 +364,87 @@ spec:
 	}
 	if !foundDeployment {
 		t.Error("Did not find reference in deployment.yaml")
+	}
+}
+
+func TestResolveReferencesStream_MultiDoc_SecondDocument(t *testing.T) {
+	cfg := &config.Config{
+		References: []config.Reference{
+			{
+				Name:       "service-ref",
+				Symbol:     "k8s.resource.name",
+				TargetKind: "Service",
+				Match: config.ReferenceMatch{
+					Kinds: []string{"Deployment"},
+					Path:  "spec.template.spec.containers.env.valueFrom.configMapKeyRef.name",
+				},
+			},
+		},
+	}
+
+	store := indexer.NewStore()
+	store.Add(&indexer.K8sResource{
+		Kind:      "Service",
+		Name:      "my-service",
+		Namespace: "default",
+		FilePath:  "/tmp/service.yaml",
+		Line:      4,
+		Col:       8,
+	})
+	store.Add(&indexer.K8sResource{
+		Kind:      "Deployment",
+		Name:      "my-deployment",
+		Namespace: "default",
+		FilePath:  "/tmp/deployment.yaml",
+		References: []indexer.Reference{{
+			Kind:   "Service",
+			Name:   "my-service",
+			Symbol: "k8s.resource.name",
+			Line:   19,
+			Col:    20,
+		}},
+	})
+
+	r := NewResolver(store, cfg)
+
+	yamlContent := `
+apiVersion: v1
+kind: Service
+metadata:
+  name: other
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: my-deployment
+spec:
+  template:
+    spec:
+      containers:
+      - name: my-container
+        env:
+        - name: MY_CONFIG
+          valueFrom:
+            configMapKeyRef:
+              name: my-service
+              key: some-key
+`
+
+	stream, err := yamlstream.Parse(yamlContent)
+	if err != nil {
+		t.Fatalf("Parse failed: %v", err)
+	}
+
+	uri := "file:///tmp/deployment.yaml"
+	line := 19
+	col := 20
+
+	locs, err := r.ResolveReferencesStream(stream, uri, line, col)
+	if err != nil {
+		t.Fatalf("ResolveReferencesStream failed: %v", err)
+	}
+	if len(locs) == 0 {
+		t.Fatalf("Expected references, got none")
 	}
 }
 

@@ -6,6 +6,7 @@ import (
 
 	"k8s-lsp/pkg/config"
 	"k8s-lsp/pkg/indexer"
+	"k8s-lsp/pkg/yamlstream"
 
 	protocol "github.com/tliron/glsp/protocol_3_16"
 )
@@ -85,5 +86,74 @@ spec:
 
 	if !strings.Contains(contents.Value, expectedContent) {
 		t.Errorf("Expected hover content to contain %q, got %q", expectedContent, contents.Value)
+	}
+}
+
+func TestResolveHoverStream_MultiDoc_SecondDocument(t *testing.T) {
+	cfg := &config.Config{
+		References: []config.Reference{
+			{
+				Name:       "service-ref",
+				Symbol:     "k8s.resource.name",
+				TargetKind: "Service",
+				Match: config.ReferenceMatch{
+					Kinds: []string{"Deployment"},
+					Path:  "spec.template.spec.containers.env.valueFrom.configMapKeyRef.name",
+				},
+			},
+		},
+	}
+
+	store := indexer.NewStore()
+	store.Add(&indexer.K8sResource{Kind: "Service", Name: "my-service", Namespace: "default", FilePath: "/tmp/service.yaml"})
+
+	r := NewResolver(store, cfg)
+
+	yamlContent := `
+apiVersion: v1
+kind: Service
+metadata:
+  name: other
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: my-deployment
+spec:
+  template:
+    spec:
+      containers:
+      - name: my-container
+        env:
+        - name: MY_CONFIG
+          valueFrom:
+            configMapKeyRef:
+              name: my-service
+              key: some-key
+`
+
+	stream, err := yamlstream.Parse(yamlContent)
+	if err != nil {
+		t.Fatalf("Parse failed: %v", err)
+	}
+
+	uri := "file:///tmp/deployment.yaml"
+	line := 19
+	col := 20
+
+	hover, err := r.ResolveHoverStream(stream, uri, line, col)
+	if err != nil {
+		t.Fatalf("ResolveHoverStream failed: %v", err)
+	}
+	if hover == nil {
+		t.Fatal("Expected hover, got nil")
+	}
+
+	contents, ok := hover.Contents.(protocol.MarkupContent)
+	if !ok {
+		t.Fatalf("Expected MarkupContent, got %T", hover.Contents)
+	}
+	if !strings.Contains(contents.Value, "**my-service**") {
+		t.Fatalf("Expected hover to mention my-service, got %q", contents.Value)
 	}
 }

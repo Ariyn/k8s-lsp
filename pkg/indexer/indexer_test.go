@@ -127,6 +127,42 @@ metadata:
 	}
 }
 
+func TestIndexContent_MultiDoc(t *testing.T) {
+	cfg := &config.Config{
+		Symbols: []config.Symbol{
+			{
+				Name: "k8s.resource.name",
+				Definitions: []config.SymbolDefinition{
+					{Kinds: []string{"Pod"}, Path: "metadata.name"},
+				},
+			},
+		},
+	}
+	store := NewStore()
+	idx := NewIndexer(store, cfg)
+
+	content := `
+apiVersion: v1
+kind: Pod
+metadata:
+  name: pod-a
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: pod-b
+`
+
+	idx.IndexContent("multi.yaml", content)
+
+	if store.Get("Pod", "default", "pod-a") == nil {
+		t.Fatalf("pod-a was not indexed")
+	}
+	if store.Get("Pod", "default", "pod-b") == nil {
+		t.Fatalf("pod-b was not indexed")
+	}
+}
+
 func TestConcurrentAccess(t *testing.T) {
 	cfg := &config.Config{
 		Symbols: []config.Symbol{

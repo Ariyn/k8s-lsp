@@ -15,6 +15,7 @@ import (
 	"k8s-lsp/pkg/indexer"
 	"k8s-lsp/pkg/resolver"
 	"k8s-lsp/pkg/validator"
+	"k8s-lsp/pkg/yamlstream"
 
 	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
@@ -33,6 +34,8 @@ type ServerState struct {
 	Resolver   *resolver.Resolver
 	Validator  *validator.Validator
 	Documents  map[string]string
+	DocVersion map[string]int32
+	YAMLCache  *yamlstream.Cache
 	RootPath   string
 	CRDSources []string
 
@@ -95,6 +98,8 @@ func main() {
 		Resolver:  res,
 		Validator: val,
 		Documents: make(map[string]string),
+		DocVersion: make(map[string]int32),
+		YAMLCache:  yamlstream.NewCache(),
 		ScanDone:  make(chan struct{}),
 	}
 
@@ -236,6 +241,10 @@ func setTrace(context *glsp.Context, params *protocol.SetTraceParams) error {
 
 func textDocumentDidOpen(context *glsp.Context, params *protocol.DidOpenTextDocumentParams) error {
 	state.Documents[params.TextDocument.URI] = params.TextDocument.Text
+	state.DocVersion[params.TextDocument.URI] = int32(params.TextDocument.Version)
+	if state.YAMLCache != nil {
+		state.YAMLCache.InvalidateURI(params.TextDocument.URI)
+	}
 
 	// Index the content to support dynamic updates (e.g. new CRDs)
 	path := uriToPath(params.TextDocument.URI)
@@ -251,6 +260,10 @@ func textDocumentDidChange(context *glsp.Context, params *protocol.DidChangeText
 		change, ok := params.ContentChanges[0].(protocol.TextDocumentContentChangeEvent)
 		if ok {
 			state.Documents[params.TextDocument.URI] = change.Text
+			state.DocVersion[params.TextDocument.URI] = int32(params.TextDocument.Version)
+			if state.YAMLCache != nil {
+				state.YAMLCache.InvalidateURI(params.TextDocument.URI)
+			}
 
 			// Index the content
 			path := uriToPath(params.TextDocument.URI)
@@ -262,6 +275,10 @@ func textDocumentDidChange(context *glsp.Context, params *protocol.DidChangeText
 			// In some versions it might be TextDocumentContentChangeEventWhole
 			if changeWhole, ok := params.ContentChanges[0].(protocol.TextDocumentContentChangeEventWhole); ok {
 				state.Documents[params.TextDocument.URI] = changeWhole.Text
+				state.DocVersion[params.TextDocument.URI] = int32(params.TextDocument.Version)
+				if state.YAMLCache != nil {
+					state.YAMLCache.InvalidateURI(params.TextDocument.URI)
+				}
 
 				// Index the content
 				path := uriToPath(params.TextDocument.URI)
@@ -316,6 +333,7 @@ func textDocumentDefinition(context *glsp.Context, params *protocol.DefinitionPa
 			if err == nil {
 				content = string(bytes)
 				state.Documents[uri] = content
+				state.DocVersion[uri] = 0
 			}
 		}
 	}
@@ -331,7 +349,12 @@ func textDocumentDefinition(context *glsp.Context, params *protocol.DefinitionPa
 	state.startWorkspaceScan()
 
 	resolve := func() ([]protocol.LocationLink, error) {
-		return state.Resolver.ResolveDefinition(content, uri, int(params.Position.Line), int(params.Position.Character))
+		ver := state.DocVersion[uri]
+		stream, err := state.YAMLCache.Get(uri, ver, content)
+		if err != nil {
+			return nil, err
+		}
+		return state.Resolver.ResolveDefinitionStream(stream, uri, int(params.Position.Line), int(params.Position.Character))
 	}
 
 	locs, err := resolve()
@@ -375,6 +398,7 @@ func textDocumentReferences(context *glsp.Context, params *protocol.ReferencePar
 			if err == nil {
 				content = string(bytes)
 				state.Documents[uri] = content
+				state.DocVersion[uri] = 0
 			}
 		}
 	}
@@ -386,7 +410,12 @@ func textDocumentReferences(context *glsp.Context, params *protocol.ReferencePar
 	state.startWorkspaceScan()
 
 	resolve := func() ([]protocol.Location, error) {
-		return state.Resolver.ResolveReferences(content, uri, int(params.Position.Line), int(params.Position.Character))
+		ver := state.DocVersion[uri]
+		stream, err := state.YAMLCache.Get(uri, ver, content)
+		if err != nil {
+			return nil, err
+		}
+		return state.Resolver.ResolveReferencesStream(stream, uri, int(params.Position.Line), int(params.Position.Character))
 	}
 
 	locs, err := resolve()
@@ -429,6 +458,7 @@ func textDocumentCompletion(context *glsp.Context, params *protocol.CompletionPa
 			if err == nil {
 				content = string(bytes)
 				state.Documents[uri] = content
+				state.DocVersion[uri] = 0
 			}
 		}
 	}
@@ -437,7 +467,13 @@ func textDocumentCompletion(context *glsp.Context, params *protocol.CompletionPa
 		return nil, nil
 	}
 
-	items, err := state.Resolver.Completion(content, int(params.Position.Line), int(params.Position.Character))
+	ver := state.DocVersion[uri]
+	stream, err := state.YAMLCache.Get(uri, ver, content)
+	if err != nil {
+		log.Error().Err(err).Msg("Failed to parse YAML for completion")
+		return nil, nil
+	}
+	items, err := state.Resolver.CompletionStream(stream, int(params.Position.Line), int(params.Position.Character))
 	if err != nil {
 		log.Error().Err(err).Msg("Failed to resolve completion")
 		return nil, nil
@@ -450,8 +486,12 @@ func publishDiagnostics(context *glsp.Context, uri string, content string) {
 	if state.Validator == nil {
 		return
 	}
-
-	diagnostics := state.Validator.Validate(uri, content)
+	ver := state.DocVersion[uri]
+	stream, err := state.YAMLCache.Get(uri, ver, content)
+	if err != nil {
+		return
+	}
+	diagnostics := state.Validator.ValidateStream(uri, stream)
 	if diagnostics == nil {
 		diagnostics = []protocol.Diagnostic{}
 	}
@@ -474,6 +514,7 @@ func textDocumentHover(context *glsp.Context, params *protocol.HoverParams) (*pr
 			if err == nil {
 				content = string(bytes)
 				state.Documents[uri] = content
+				state.DocVersion[uri] = 0
 			}
 		}
 	}
@@ -482,7 +523,13 @@ func textDocumentHover(context *glsp.Context, params *protocol.HoverParams) (*pr
 		return nil, nil
 	}
 
-	hover, err := state.Resolver.ResolveHover(content, uri, int(params.Position.Line), int(params.Position.Character))
+	ver := state.DocVersion[uri]
+	stream, err := state.YAMLCache.Get(uri, ver, content)
+	if err != nil {
+		log.Error().Err(err).Msg("Failed to parse YAML for hover")
+		return nil, nil
+	}
+	hover, err := state.Resolver.ResolveHoverStream(stream, uri, int(params.Position.Line), int(params.Position.Character))
 	if err != nil {
 		log.Error().Err(err).Msg("Failed to resolve hover")
 		return nil, nil

@@ -5,6 +5,7 @@ import (
 
 	"k8s-lsp/pkg/config"
 	"k8s-lsp/pkg/indexer"
+	"k8s-lsp/pkg/yamlstream"
 )
 
 func TestCompletion(t *testing.T) {
@@ -97,5 +98,65 @@ spec:
 	}
 	if !foundOtherService {
 		t.Error("Did not find other-service in completion items")
+	}
+}
+
+func TestCompletion_MultiDoc_SecondDocument(t *testing.T) {
+	cfg := &config.Config{
+		References: []config.Reference{
+			{
+				Name:       "cm-ref",
+				Symbol:     "k8s.resource.name",
+				TargetKind: "ConfigMap",
+				Match: config.ReferenceMatch{
+					Kinds: []string{"Deployment"},
+					Path:  "spec.template.spec.containers.envFrom.configMapRef.name",
+				},
+			},
+		},
+	}
+
+	store := indexer.NewStore()
+	store.Add(&indexer.K8sResource{Kind: "ConfigMap", Name: "cm-a", Namespace: "default", FilePath: "/tmp/cm-a.yaml"})
+	store.Add(&indexer.K8sResource{Kind: "ConfigMap", Name: "cm-b", Namespace: "default", FilePath: "/tmp/cm-b.yaml"})
+
+	r := NewResolver(store, cfg)
+
+	yamlContent := `
+apiVersion: v1
+kind: Service
+metadata:
+  name: svc
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: dep
+spec:
+  template:
+    spec:
+      containers:
+      - name: c
+        envFrom:
+        - configMapRef:
+            name: 
+`
+
+	stream, err := yamlstream.Parse(yamlContent)
+	if err != nil {
+		t.Fatalf("Parse failed: %v", err)
+	}
+
+	// Cursor inside doc #2 on the blank value after "name: ".
+	// (0-based line/col). The leading newline makes lines 1-based in comments.
+	line := 17
+	col := 18
+
+	items, err := r.CompletionStream(stream, line, col)
+	if err != nil {
+		t.Fatalf("CompletionStream failed: %v", err)
+	}
+	if len(items) != 2 {
+		t.Fatalf("Expected 2 completion items, got %d", len(items))
 	}
 }
