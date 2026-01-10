@@ -83,10 +83,10 @@ func textDocumentRename(context *glsp.Context, params *protocol.RenameParams) (*
 }
 
 type renameContext struct {
-	kind              string
-	oldName           string
-	scopeNamespace    string // always normalized ("default" for namespaced)
-	clusterScoped     bool
+	kind               string
+	oldName            string
+	scopeNamespace     string // always normalized ("default" for namespaced)
+	clusterScoped      bool
 	connectedNamespace string // for PV
 }
 
@@ -126,9 +126,9 @@ func symbolContextAt(stream *yamlstream.Stream, line0, col0 int) (*renameContext
 			clusterScoped:  isClusterScopedKind(docKind),
 		}
 		if ctx.clusterScoped && ctx.kind == "PersistentVolume" {
-			connected := findYAMLString(doc.Node, "spec", "claimRef", "namespace")
-			ctx.connectedNamespace = normalizeNamespace(connected)
-			ctx.scopeNamespace = ctx.connectedNamespace
+			connected := strings.TrimSpace(findYAMLString(doc.Node, "spec", "claimRef", "namespace"))
+			ctx.connectedNamespace = connected
+			ctx.scopeNamespace = connected
 		}
 		return ctx, nil
 	}
@@ -293,8 +293,8 @@ func persistentVolumeConnectedNamespace(pvName string) (string, error) {
 		if name != pvName {
 			continue
 		}
-		ns := findYAMLString(&doc, "spec", "claimRef", "namespace")
-		return normalizeNamespace(ns), nil
+		ns := strings.TrimSpace(findYAMLString(&doc, "spec", "claimRef", "namespace"))
+		return ns, nil
 	}
 
 	return "", nil

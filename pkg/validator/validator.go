@@ -19,10 +19,10 @@ type Rule struct {
 }
 
 type Check struct {
-	Type           string `yaml:"type"`           // "reference", "required", "resource-match"
-	Path           string `yaml:"path"`           // JSONPath-like string (e.g. spec.selector)
-	TargetKind     string `yaml:"targetKind"`     // For reference checks
-	TargetPath     string `yaml:"targetPath"`     // For reference checks
+	Type           string `yaml:"type"`       // "reference", "required", "resource-match"
+	Path           string `yaml:"path"`       // JSONPath-like string (e.g. spec.selector)
+	TargetKind     string `yaml:"targetKind"` // For reference checks
+	TargetPath     string `yaml:"targetPath"` // For reference checks
 	Message        string `yaml:"message"`
 	SourceProperty string `yaml:"sourceProperty"` // For resource-match
 	TargetProperty string `yaml:"targetProperty"` // For resource-match
@@ -320,7 +320,7 @@ func (v *Validator) checkResourceMatch(uri string, root *yaml.Node, check Check,
 		if len(sourceNodes) == 0 {
 			continue
 		}
-		sourceVal := sourceNodes[0].Value
+		sourceVal := nodeToComparableString(sourceNodes[0])
 
 		// Get Target Value
 		targetVal := v.getValueFromResource(targetRes, check.TargetProperty)
@@ -367,20 +367,20 @@ func (v *Validator) getValueFromResource(res *indexer.K8sResource, path string) 
 			}
 			break
 		}
-		
+
 		if node.Kind == yaml.DocumentNode && len(node.Content) > 0 {
 			root := node.Content[0]
 			if root.Kind == yaml.MappingNode {
 				// Check if this is the right resource
 				kindNodes := findNodes(root, "kind")
 				nameNodes := findNodes(root, "metadata.name")
-				
+
 				if len(kindNodes) > 0 && len(nameNodes) > 0 {
 					if kindNodes[0].Value == res.Kind && nameNodes[0].Value == res.Name {
 						// Found it
 						targetNodes := findNodes(root, path)
 						if len(targetNodes) > 0 {
-							return targetNodes[0].Value
+							return nodeToComparableString(targetNodes[0])
 						}
 						return ""
 					}
@@ -389,4 +389,27 @@ func (v *Validator) getValueFromResource(res *indexer.K8sResource, path string) 
 		}
 	}
 	return ""
+}
+
+func nodeToComparableString(node *yaml.Node) string {
+	if node == nil {
+		return ""
+	}
+	switch node.Kind {
+	case yaml.ScalarNode:
+		return node.Value
+	case yaml.SequenceNode:
+		vals := make([]string, 0, len(node.Content))
+		for _, c := range node.Content {
+			if c != nil && c.Kind == yaml.ScalarNode {
+				vals = append(vals, c.Value)
+			}
+		}
+		return strings.Join(vals, ",")
+	case yaml.MappingNode:
+		// Not currently used for resource-match checks.
+		return ""
+	default:
+		return ""
+	}
 }

@@ -93,14 +93,14 @@ func main() {
 	}
 
 	state = &ServerState{
-		Store:     store,
-		Indexer:   idx,
-		Resolver:  res,
-		Validator: val,
-		Documents: make(map[string]string),
+		Store:      store,
+		Indexer:    idx,
+		Resolver:   res,
+		Validator:  val,
+		Documents:  make(map[string]string),
 		DocVersion: make(map[string]int32),
 		YAMLCache:  yamlstream.NewCache(),
-		ScanDone:  make(chan struct{}),
+		ScanDone:   make(chan struct{}),
 	}
 
 	handler := protocol.Handler{
@@ -139,7 +139,7 @@ func initialize(context *glsp.Context, params *protocol.InitializeParams) (any, 
 			TriggerCharacters: []string{":", " "},
 		},
 		CodeActionProvider: &protocol.CodeActionOptions{
-			CodeActionKinds: []protocol.CodeActionKind{protocol.CodeActionKindQuickFix},
+			CodeActionKinds: []protocol.CodeActionKind{protocol.CodeActionKindQuickFix, protocol.CodeActionKindSource},
 		},
 		RenameProvider: &protocol.RenameOptions{},
 		ExecuteCommandProvider: &protocol.ExecuteCommandOptions{
