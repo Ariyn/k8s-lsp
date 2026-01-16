@@ -2226,12 +2226,19 @@ func matchPath(current []string, pattern string) bool {
 		return false
 	}
 	for i, part := range parts {
-		cleanPart := strings.TrimSuffix(part, "[]")
+		cleanPart := cleanPathPart(part)
 		if cleanPart != current[i] {
 			return false
 		}
 	}
 	return true
+}
+
+func cleanPathPart(part string) string {
+	// Support both config-style array notation ("[]") and validation.yaml notation ("[*]").
+	part = strings.TrimSuffix(part, "[]")
+	part = strings.TrimSuffix(part, "[*]")
+	return part
 }
 
 func contains(slice []string, item string) bool {
@@ -2258,7 +2265,7 @@ func matchPathPrefix(current []string, pattern string) bool {
 		return false
 	}
 	for i, part := range parts {
-		cleanPart := strings.TrimSuffix(part, "[]")
+		cleanPart := cleanPathPart(part)
 		if cleanPart != current[i] {
 			return false
 		}

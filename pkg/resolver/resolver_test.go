@@ -150,6 +150,60 @@ spec:
 	}
 }
 
+func TestResolveDefinition_ValidationStyleArrayPath_IngressBackendService(t *testing.T) {
+	cfg := &config.Config{
+		References: []config.Reference{
+			{
+				Name:       "ingress.backend.service.validation",
+				Symbol:     "k8s.resource.name",
+				TargetKind: "Service",
+				Match: config.ReferenceMatch{
+					Kinds: []string{"Ingress"},
+					Path:  "spec.rules[*].http.paths[*].backend.service.name",
+				},
+			},
+		},
+	}
+
+	store := indexer.NewStore()
+	store.Add(&indexer.K8sResource{Kind: "Service", Name: "my-svc", Namespace: "default", FilePath: "/tmp/svc.yaml", Line: 4, Col: 8})
+
+	r := NewResolver(store, cfg)
+
+	yamlContent := `
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: ing
+spec:
+  rules:
+  - http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: my-svc
+            port:
+              number: 80
+`
+
+	// "name: my-svc" is on line 13 (0-based, due to leading newline), value starts after "name: " with indentation.
+	line := 13
+	col := 18
+
+	locs, err := r.ResolveDefinition(yamlContent, "file:///tmp/ing.yaml", line, col)
+	if err != nil {
+		t.Fatalf("ResolveDefinition failed: %v", err)
+	}
+	if len(locs) != 1 {
+		t.Fatalf("expected 1 location, got %d", len(locs))
+	}
+	if locs[0].TargetURI != "file:///tmp/svc.yaml" {
+		t.Fatalf("expected TargetURI file:///tmp/svc.yaml, got %s", locs[0].TargetURI)
+	}
+}
+
 func TestResolveDefinition_Self(t *testing.T) {
 	// 1. Setup Config
 	cfg := &config.Config{
