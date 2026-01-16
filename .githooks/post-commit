@@ -58,3 +58,14 @@ if [[ -n "${NEW_VERSION}" ]]; then
 fi
 
 K8S_LSP_SKIP_POST_COMMIT_BUMP=1 git commit -m "${MSG}" --no-verify >/dev/null
+
+# Tag the bump commit with the client version.
+# Use a lightweight tag to avoid editor/GPG prompts in hooks.
+if [[ -n "${NEW_VERSION}" ]]; then
+  TAG="v${NEW_VERSION}"
+  if git rev-parse -q --verify "refs/tags/${TAG}" >/dev/null; then
+    echo "post-commit: tag '${TAG}' already exists; skipping" >&2
+  else
+    git tag "${TAG}" >/dev/null
+  fi
+fi
