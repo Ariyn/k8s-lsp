@@ -12,6 +12,7 @@ import (
 
 	"k8s-lsp/pkg/config"
 	"k8s-lsp/pkg/indexer"
+	"k8s-lsp/pkg/schema"
 	"k8s-lsp/pkg/yamlstream"
 
 	"github.com/rs/zerolog/log"
@@ -45,10 +46,15 @@ func filePathToURI(path string) string {
 type Resolver struct {
 	Store  *indexer.Store
 	Config *config.Config
+	Schemas *schema.Registry
 }
 
-func NewResolver(store *indexer.Store, cfg *config.Config) *Resolver {
-	return &Resolver{Store: store, Config: cfg}
+func NewResolver(store *indexer.Store, cfg *config.Config, schemas ...*schema.Registry) *Resolver {
+	var s *schema.Registry
+	if len(schemas) > 0 {
+		s = schemas[0]
+	}
+	return &Resolver{Store: store, Config: cfg, Schemas: s}
 }
 
 func (r *Resolver) ResolveHover(docContent string, uri string, line, col int) (*protocol.Hover, error) {
@@ -298,6 +304,11 @@ func (r *Resolver) resolveHoverInDoc(docNode *yaml.Node, uri string, line0, col0
 				}
 			}
 		}
+	}
+
+	// Fallback: schema-based hover (description/default/enum).
+	if h := r.schemaHover(docNode, targetNode, path); h != nil {
+		return h, nil
 	}
 
 	return nil, nil
@@ -1080,7 +1091,78 @@ func (r *Resolver) ResolveReferences(docContent string, uri string, line, col in
 			}
 		}
 	}
+
 	return nil, nil
+}
+
+func (r *Resolver) schemaHover(docNode *yaml.Node, targetNode *yaml.Node, path []string) *protocol.Hover {
+	if r == nil || r.Schemas == nil || docNode == nil || targetNode == nil || len(path) == 0 {
+		return nil
+	}
+	apiVersion := findAPIVersion(docNode)
+	kind := findKind(docNode)
+	if apiVersion == "" || kind == "" {
+		return nil
+	}
+	group, version := schema.ParseAPIVersion(apiVersion)
+	gvk := schema.GVK{Group: group, Version: version, Kind: kind}
+	root := r.Schemas.Get(gvk)
+	if root == nil {
+		root = schema.KubernetesObjectFallback()
+	}
+	if root == nil {
+		return nil
+	}
+
+	s := schema.ResolvePath(root, path)
+	if s == nil {
+		return nil
+	}
+	name := path[len(path)-1]
+
+	md := "**" + name + "**"
+	if s.Type != "" && s.Type != schema.TypeAny {
+		md += "\n\nType: `" + string(s.Type) + "`"
+	}
+	if s.Default != "" {
+		md += "\n\nDefault: `" + s.Default + "`"
+	}
+	if len(s.Enum) > 0 {
+		md += "\n\nEnum: `" + joinInline(s.Enum) + "`"
+	}
+	if s.Description != "" {
+		md += "\n\n" + s.Description
+	}
+
+	return &protocol.Hover{Contents: protocol.MarkupContent{Kind: protocol.MarkupKindMarkdown, Value: md}}
+}
+
+func joinInline(items []string) string {
+	if len(items) == 0 {
+		return ""
+	}
+	out := items[0]
+	for i := 1; i < len(items); i++ {
+		out += ", " + items[i]
+	}
+	return out
+}
+
+func findAPIVersion(root *yaml.Node) string {
+	if root == nil {
+		return ""
+	}
+	if root.Kind == yaml.DocumentNode && len(root.Content) > 0 {
+		root = root.Content[0]
+	}
+	if root.Kind == yaml.MappingNode {
+		for i := 0; i < len(root.Content); i += 2 {
+			if root.Content[i].Value == "apiVersion" {
+				return root.Content[i+1].Value
+			}
+		}
+	}
+	return ""
 }
 
 func filterOutLocationAtPosition(locs []protocol.Location, uri string, line, col int) []protocol.Location {

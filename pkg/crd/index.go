@@ -11,9 +11,9 @@ import (
 
 // DownloadAndIndex downloads CRD YAMLs from URLs into a persistent cache directory and
 // indexes them so dynamic kinds become available before scanning the workspace.
-func DownloadAndIndex(idx *indexer.Indexer, sources []string) {
+func DownloadAndIndex(idx *indexer.Indexer, sources []string) ([]string, error) {
 	if idx == nil || len(sources) == 0 {
-		return
+		return nil, nil
 	}
 
 	opts := DefaultOptions()
@@ -39,4 +39,6 @@ func DownloadAndIndex(idx *indexer.Indexer, sources []string) {
 	if len(paths) > 0 {
 		log.Info().Msg(fmt.Sprintf("CRD preload complete (%d source(s))", len(paths)))
 	}
+
+	return paths, err
 }

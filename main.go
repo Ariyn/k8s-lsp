@@ -12,8 +12,10 @@ import (
 	"time"
 
 	"k8s-lsp/pkg/config"
+	"k8s-lsp/pkg/crd"
 	"k8s-lsp/pkg/indexer"
 	"k8s-lsp/pkg/resolver"
+	"k8s-lsp/pkg/schema"
 	"k8s-lsp/pkg/validator"
 	"k8s-lsp/pkg/yamlstream"
 
@@ -22,6 +24,7 @@ import (
 	"github.com/tliron/glsp"
 	protocol "github.com/tliron/glsp/protocol_3_16"
 	"github.com/tliron/glsp/server"
+	"gopkg.in/yaml.v3"
 )
 
 const lsName = "k8s-lsp"
@@ -33,6 +36,7 @@ type ServerState struct {
 	Indexer    *indexer.Indexer
 	Resolver   *resolver.Resolver
 	Validator  *validator.Validator
+	Schemas    *schema.Registry
 	Documents  map[string]string
 	DocVersion map[string]int32
 	YAMLCache  *yamlstream.Cache
@@ -111,7 +115,9 @@ func main() {
 	// Initialize state
 	store := indexer.NewStore()
 	idx := indexer.NewIndexer(store, cfg)
-	res := resolver.NewResolver(store, cfg)
+	schemas := schema.NewRegistry()
+	schema.RegisterBuiltins(schemas)
+	res := resolver.NewResolver(store, cfg, schemas)
 
 	val, err := validator.NewValidator(filepath.Join(configPath, "rules/validation.yaml"), store)
 	if err != nil {
@@ -123,6 +129,7 @@ func main() {
 		Indexer:    idx,
 		Resolver:   res,
 		Validator:  val,
+		Schemas:    schemas,
 		Documents:  make(map[string]string),
 		DocVersion: make(map[string]int32),
 		YAMLCache:  yamlstream.NewCache(),
@@ -289,6 +296,29 @@ func toInt(v any) (int, bool) {
 
 func initialized(context *glsp.Context, params *protocol.InitializedParams) error {
 	log.Info().Msg("Client initialized")
+
+	// Preload CRDs (download -> index -> load schemas) before scanning the workspace.
+	// This ensures dynamic kinds and their schemas are available early.
+	if state != nil && len(state.CRDSources) > 0 {
+		paths, err := crd.DownloadAndIndex(state.Indexer, state.CRDSources)
+		if err != nil {
+			log.Warn().Err(err).Msg("CRD preload had errors")
+		}
+		if state.Schemas != nil {
+			loaded := 0
+			for _, p := range paths {
+				n, err := schema.LoadCRDSchemasFromFile(state.Schemas, p)
+				if err != nil {
+					log.Warn().Err(err).Str("path", p).Msg("Failed to load CRD schema")
+					continue
+				}
+				loaded += n
+			}
+			if loaded > 0 {
+				log.Info().Int("schemas", loaded).Msg("Loaded CRD schemas")
+			}
+		}
+	}
 
 	state.startWorkspaceScan()
 
@@ -693,6 +723,26 @@ func publishDiagnostics(context *glsp.Context, uri string, content string) {
 		return
 	}
 	diagnostics := state.Validator.ValidateStream(uri, stream)
+	// Schema-based diagnostics (unknown fields, type/enum mismatches)
+	if state.Schemas != nil {
+		for _, doc := range stream.Docs {
+			if doc.Node == nil {
+				continue
+			}
+			apiVersion := extractTopLevelScalar(doc.Node, "apiVersion")
+			kind := extractTopLevelScalar(doc.Node, "kind")
+			if kind == "" || apiVersion == "" {
+				continue
+			}
+			group, version := schema.ParseAPIVersion(apiVersion)
+			gvk := schema.GVK{Group: group, Version: version, Kind: kind}
+			sch := state.Schemas.Get(gvk)
+			if sch == nil {
+				sch = schema.KubernetesObjectFallback()
+			}
+			diagnostics = append(diagnostics, schema.ValidateDocument(doc.Node, sch)...)
+		}
+	}
 	if diagnostics == nil {
 		diagnostics = []protocol.Diagnostic{}
 	}
@@ -701,6 +751,29 @@ func publishDiagnostics(context *glsp.Context, uri string, content string) {
 		URI:         uri,
 		Diagnostics: diagnostics,
 	})
+}
+
+func extractTopLevelScalar(docNode *yaml.Node, key string) string {
+	if docNode == nil {
+		return ""
+	}
+	if docNode.Kind == yaml.DocumentNode {
+		if len(docNode.Content) == 0 {
+			return ""
+		}
+		docNode = docNode.Content[0]
+	}
+	if docNode == nil || docNode.Kind != yaml.MappingNode {
+		return ""
+	}
+	for i := 0; i < len(docNode.Content); i += 2 {
+		k := docNode.Content[i]
+		v := docNode.Content[i+1]
+		if k != nil && k.Value == key && v != nil && v.Kind == yaml.ScalarNode {
+			return v.Value
+		}
+	}
+	return ""
 }
 
 func scheduleDiagnostics(context *glsp.Context, uri string) {

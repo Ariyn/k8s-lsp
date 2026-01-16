@@ -2,6 +2,7 @@ package resolver
 
 import (
 	"k8s-lsp/pkg/indexer"
+	"k8s-lsp/pkg/schema"
 	"k8s-lsp/pkg/yamlstream"
 	"sort"
 	"strings"
@@ -269,5 +270,91 @@ func (r *Resolver) completionInDoc(docNode *yaml.Node, line1, col1 int) ([]proto
 		}
 	}
 
+	// Fallback: schema-based completion.
+	if r != nil && r.Schemas != nil {
+		if items := r.schemaCompletion(docNode, targetNode, parentNode, path); items != nil {
+			return items, nil
+		}
+	}
+
 	return nil, nil
+}
+
+func (r *Resolver) schemaCompletion(docNode *yaml.Node, targetNode *yaml.Node, parentNode *yaml.Node, path []string) []protocol.CompletionItem {
+	if r == nil || r.Schemas == nil || docNode == nil || targetNode == nil {
+		return nil
+	}
+	apiVersion := findAPIVersion(docNode)
+	kind := findKind(docNode)
+	if apiVersion == "" || kind == "" {
+		return nil
+	}
+	group, version := schema.ParseAPIVersion(apiVersion)
+	gvk := schema.GVK{Group: group, Version: version, Kind: kind}
+	root := r.Schemas.Get(gvk)
+	if root == nil {
+		root = schema.KubernetesObjectFallback()
+	}
+	if root == nil {
+		return nil
+	}
+
+	// Key completion: suggest properties for the parent mapping.
+	if isMappingKey(parentNode, targetNode) {
+		parentSchema := schema.ResolveParentPath(root, path)
+		if parentSchema == nil {
+			return nil
+		}
+		if parentSchema.Type == schema.TypeArray && parentSchema.Items != nil {
+			parentSchema = parentSchema.Items
+		}
+		if parentSchema.Type != schema.TypeObject || len(parentSchema.Properties) == 0 {
+			return nil
+		}
+
+		present := map[string]struct{}{}
+		if parentNode != nil && parentNode.Kind == yaml.MappingNode {
+			for i := 0; i < len(parentNode.Content); i += 2 {
+				k := parentNode.Content[i]
+				if k != nil && k.Value != "" {
+					present[k.Value] = struct{}{}
+				}
+			}
+		}
+
+		keys := make([]string, 0, len(parentSchema.Properties))
+		for k := range parentSchema.Properties {
+			if _, ok := present[k]; ok {
+				continue
+			}
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+
+		items := make([]protocol.CompletionItem, 0, len(keys))
+		for _, k := range keys {
+			knd := protocol.CompletionItemKindProperty
+			items = append(items, protocol.CompletionItem{Label: k, Kind: &knd})
+		}
+		if len(items) == 0 {
+			return nil
+		}
+		return items
+	}
+
+	// Value completion: suggest enum values.
+	fieldSchema := schema.ResolvePath(root, path)
+	if fieldSchema == nil {
+		return nil
+	}
+	if len(fieldSchema.Enum) == 0 {
+		return nil
+	}
+	items := make([]protocol.CompletionItem, 0, len(fieldSchema.Enum))
+	for _, v := range fieldSchema.Enum {
+		knd := protocol.CompletionItemKindEnumMember
+		detail := "Enum value"
+		items = append(items, protocol.CompletionItem{Label: v, Kind: &knd, Detail: &detail})
+	}
+	return items
 }
