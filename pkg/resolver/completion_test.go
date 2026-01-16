@@ -1,11 +1,13 @@
 package resolver
 
 import (
+	"strings"
 	"testing"
 
 	"k8s-lsp/pkg/config"
 	"k8s-lsp/pkg/indexer"
 	"k8s-lsp/pkg/yamlstream"
+	"gopkg.in/yaml.v3"
 )
 
 func TestCompletion(t *testing.T) {
@@ -158,5 +160,230 @@ spec:
 	}
 	if len(items) != 2 {
 		t.Fatalf("Expected 2 completion items, got %d", len(items))
+	}
+}
+
+func TestCompletion_LabelSelector_MatchLabels_Value(t *testing.T) {
+	cfg := &config.Config{
+		References: []config.Reference{
+			{
+				Name:       "service.selector.label",
+				Symbol:     "k8s.label",
+				TargetKind: "Pod",
+				Match: config.ReferenceMatch{
+					Kinds: []string{"Service"},
+					Path:  "spec.selector",
+				},
+			},
+		},
+	}
+
+	store := indexer.NewStore()
+	store.Add(&indexer.K8sResource{Kind: "Deployment", Name: "a", Namespace: "default", FilePath: "/tmp/a.yaml", Labels: map[string]string{"app": "web"}})
+	store.Add(&indexer.K8sResource{Kind: "Deployment", Name: "b", Namespace: "default", FilePath: "/tmp/b.yaml", Labels: map[string]string{"app": "api"}})
+
+	r := NewResolver(store, cfg)
+
+	yamlContent := `
+apiVersion: v1
+kind: Service
+metadata:
+  name: svc
+spec:
+  selector:
+    app: 
+`
+
+	// Cursor after "app: "
+	line := 7
+	col := 9
+	items, err := r.Completion(yamlContent, line, col)
+	if err != nil {
+		t.Fatalf("Completion failed: %v", err)
+	}
+	if len(items) != 2 {
+		t.Fatalf("Expected 2 completion items, got %d", len(items))
+	}
+}
+
+func TestCompletion_LabelSelector_MatchLabels_Key(t *testing.T) {
+	cfg := &config.Config{
+		References: []config.Reference{
+			{
+				Name:       "workload.selector.matchLabels",
+				Symbol:     "k8s.label",
+				TargetKind: "Pod",
+				Match: config.ReferenceMatch{
+					Kinds: []string{"Deployment"},
+					Path:  "spec.selector.matchLabels",
+				},
+			},
+		},
+	}
+
+	store := indexer.NewStore()
+	store.Add(&indexer.K8sResource{Kind: "Deployment", Name: "a", Namespace: "default", FilePath: "/tmp/a.yaml", Labels: map[string]string{"app": "web", "tier": "backend"}})
+
+	r := NewResolver(store, cfg)
+
+	yamlContent := `
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: dep
+spec:
+  selector:
+    matchLabels:
+      ap: x
+`
+
+	// Cursor on the key "ap" (should suggest keys like "app", "tier").
+	items, err := r.Completion(yamlContent, 8, 7)
+	if err != nil {
+		t.Fatalf("Completion failed: %v", err)
+	}
+	if len(items) < 1 {
+		t.Fatalf("Expected at least 1 completion item, got %d", len(items))
+	}
+}
+
+func TestCompletion_LabelSelector_Value_FallbackAcrossNamespaces(t *testing.T) {
+	cfg := &config.Config{
+		References: []config.Reference{
+			{
+				Name:       "service.selector.label",
+				Symbol:     "k8s.label",
+				TargetKind: "Pod",
+				Match: config.ReferenceMatch{
+					Kinds: []string{"Service"},
+					Path:  "spec.selector",
+				},
+			},
+		},
+	}
+
+	store := indexer.NewStore()
+	// Only in other namespace; completion should still suggest it via fallback.
+	store.Add(&indexer.K8sResource{Kind: "Deployment", Name: "a", Namespace: "other", FilePath: "/tmp/a.yaml", Labels: map[string]string{"app": "web"}})
+
+	r := NewResolver(store, cfg)
+
+	yamlContent := `
+apiVersion: v1
+kind: Service
+metadata:
+  name: svc
+  namespace: default
+spec:
+  selector:
+    app: 
+`
+
+	items, err := r.Completion(yamlContent, 8, 9)
+	if err != nil {
+		t.Fatalf("Completion failed: %v", err)
+	}
+	if len(items) != 1 {
+		t.Fatalf("Expected 1 completion item, got %d", len(items))
+	}
+}
+
+func TestCompletion_LabelSelector_MatchExpressions_Key_And_Values(t *testing.T) {
+	cfg := &config.Config{
+		References: []config.Reference{
+			{
+				Name:       "workload.selector.matchExpressions",
+				Symbol:     "k8s.label",
+				TargetKind: "Pod",
+				Match: config.ReferenceMatch{
+					Kinds: []string{"Deployment"},
+					Path:  "spec.selector.matchExpressions",
+				},
+			},
+		},
+	}
+
+	store := indexer.NewStore()
+	store.Add(&indexer.K8sResource{Kind: "Deployment", Name: "a", Namespace: "default", FilePath: "/tmp/a.yaml", Labels: map[string]string{"app": "web", "tier": "backend"}})
+	store.Add(&indexer.K8sResource{Kind: "Deployment", Name: "b", Namespace: "default", FilePath: "/tmp/b.yaml", Labels: map[string]string{"app": "api"}})
+
+	r := NewResolver(store, cfg)
+
+	yamlContent := `
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: dep
+spec:
+  selector:
+    matchExpressions:
+    - key: 
+      operator: In
+      values:
+      - 
+`
+
+	// 1) Complete the matchExpressions key field (should suggest label keys)
+	itemsKey, err := r.Completion(yamlContent, 8, 11)
+	if err != nil {
+		t.Fatalf("Completion (key) failed: %v", err)
+	}
+	if len(itemsKey) < 1 {
+		t.Fatalf("Expected at least 1 completion item for key, got %d", len(itemsKey))
+	}
+
+	// 2) Complete the values entry. Set key to 'app' and then locate the values[] scalar node
+	// from the parsed YAML AST to get stable line/col.
+	yamlContent2 := strings.Replace(yamlContent, "key: ", "key: app", 1)
+	stream, err := yamlstream.Parse(yamlContent2)
+	if err != nil {
+		t.Fatalf("Parse failed: %v", err)
+	}
+	if stream == nil || len(stream.Docs) == 0 || stream.Docs[0].Node == nil {
+		t.Fatalf("Expected parsed stream with at least one document")
+	}
+
+	// Navigate to spec.selector.matchExpressions[0].values[0]
+	root := stream.Docs[0].Node
+	if root.Kind == yaml.DocumentNode {
+		if len(root.Content) == 0 {
+			t.Fatalf("Expected document content")
+		}
+		root = root.Content[0]
+	}
+	if root == nil || root.Kind != yaml.MappingNode {
+		t.Fatalf("Expected root mapping")
+	}
+	spec := getMappingValue(root, "spec")
+	selector := getMappingValue(spec, "selector")
+	matchExprs := getMappingValue(selector, "matchExpressions")
+	if matchExprs == nil || matchExprs.Kind != yaml.SequenceNode || len(matchExprs.Content) == 0 {
+		t.Fatalf("Expected matchExpressions sequence")
+	}
+	expr0 := matchExprs.Content[0]
+	values := getMappingValue(expr0, "values")
+	if values == nil || values.Kind != yaml.SequenceNode || len(values.Content) == 0 {
+		t.Fatalf("Expected values sequence")
+	}
+	item0 := values.Content[0]
+	if item0 == nil {
+		t.Fatalf("Expected first values item")
+	}
+
+	line := item0.Line - 1
+	col := item0.Column - 1
+	if line < 0 {
+		line = 0
+	}
+	if col < 0 {
+		col = 0
+	}
+
+	itemsVal, err := r.CompletionStream(stream, line, col)
+	if err != nil {
+		t.Fatalf("Completion (values) failed: %v", err)
+	}
+	if len(itemsVal) != 2 {
+		t.Fatalf("Expected 2 completion items for values, got %d", len(itemsVal))
 	}
 }
