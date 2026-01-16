@@ -64,6 +64,22 @@
       "type": "object",
       "title": "Kubernetes LSP",
       "properties": {
+        "k8sLsp.diagnosticsDebounceMs": {
+          "scope": "resource",
+          "type": "number",
+          "default": 200,
+          "minimum": 0,
+          "maximum": 5000,
+          "description": "Debounce (ms) before publishing diagnostics after edits. 0 disables debouncing."
+        },
+        "k8sLsp.indexDebounceMs": {
+          "scope": "resource",
+          "type": "number",
+          "default": 250,
+          "minimum": 0,
+          "maximum": 5000,
+          "description": "Debounce (ms) before re-indexing open YAML files after edits. 0 disables debouncing."
+        },
         "k8sLsp.crdSources": {
           "scope": "resource",
           "type": "array",

@@ -104,7 +104,9 @@ export function activate(context: ExtensionContext) {
     // Register the server for plain text documents
     documentSelector: [{ scheme: 'file', language: 'yaml' }],
     initializationOptions: {
-      crdSources: workspace.getConfiguration('k8sLsp').get<string[]>('crdSources') ?? []
+      crdSources: workspace.getConfiguration('k8sLsp').get<string[]>('crdSources') ?? [],
+      diagnosticsDebounceMs: workspace.getConfiguration('k8sLsp').get<number>('diagnosticsDebounceMs'),
+      indexDebounceMs: workspace.getConfiguration('k8sLsp').get<number>('indexDebounceMs')
     },
     synchronize: {
       // Notify the server about file changes to '.clientrc files contained in the workspace

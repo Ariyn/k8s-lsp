@@ -42,6 +42,32 @@ type ServerState struct {
 	scanMu      sync.Mutex
 	scanStarted bool
 	ScanDone    chan struct{}
+
+	DiagnosticsDebounce time.Duration
+	IndexDebounce       time.Duration
+
+	diagMu     sync.Mutex
+	diagTimers map[string]*time.Timer
+	diagLatest map[string]diagRequest
+	diagSeq    map[string]uint64
+
+	indexMu     sync.Mutex
+	indexTimers map[string]*time.Timer
+	indexLatest map[string]indexRequest
+	indexSeq    map[string]uint64
+}
+
+type diagRequest struct {
+	seq     uint64
+	uri     string
+	content string
+}
+
+type indexRequest struct {
+	seq     uint64
+	uri     string
+	path    string
+	content string
 }
 
 var state *ServerState
@@ -101,6 +127,9 @@ func main() {
 		DocVersion: make(map[string]int32),
 		YAMLCache:  yamlstream.NewCache(),
 		ScanDone:   make(chan struct{}),
+		// Defaults; may be overridden by client initializationOptions.
+		DiagnosticsDebounce: 200 * time.Millisecond,
+		IndexDebounce:       250 * time.Millisecond,
 	}
 
 	handler := protocol.Handler{
@@ -164,12 +193,36 @@ func initialize(context *glsp.Context, params *protocol.InitializeParams) (any, 
 	log.Info().Str("root", state.RootPath).Msg("Initializing...")
 
 	// Read initializationOptions from the client (VS Code extension).
-	// Expected shape: { crdSources: string[] }
+	// Expected shape: { crdSources: string[], diagnosticsDebounceMs?: number, indexDebounceMs?: number }
 	if params != nil {
 		if raw := params.InitializationOptions; raw != nil {
 			if m, ok := raw.(map[string]any); ok {
 				if v, ok := m["crdSources"]; ok {
 					state.CRDSources = toStringSlice(v)
+				}
+				if v, ok := m["diagnosticsDebounceMs"]; ok {
+					if ms, ok := toInt(v); ok {
+						if ms < 0 {
+							ms = 0
+						}
+						if ms > 5000 {
+							ms = 5000
+						}
+						state.DiagnosticsDebounce = time.Duration(ms) * time.Millisecond
+						log.Info().Int("ms", ms).Msg("Configured diagnostics debounce")
+					}
+				}
+				if v, ok := m["indexDebounceMs"]; ok {
+					if ms, ok := toInt(v); ok {
+						if ms < 0 {
+							ms = 0
+						}
+						if ms > 5000 {
+							ms = 5000
+						}
+						state.IndexDebounce = time.Duration(ms) * time.Millisecond
+						log.Info().Int("ms", ms).Msg("Configured index debounce")
+					}
 				}
 			}
 		}
@@ -208,6 +261,29 @@ func toStringSlice(v any) []string {
 		return out
 	default:
 		return nil
+	}
+}
+
+func toInt(v any) (int, bool) {
+	switch vv := v.(type) {
+	case int:
+		return vv, true
+	case int32:
+		return int(vv), true
+	case int64:
+		return int(vv), true
+	case float64:
+		return int(vv), true
+	case float32:
+		return int(vv), true
+	case json.Number:
+		i, err := vv.Int64()
+		if err != nil {
+			return 0, false
+		}
+		return int(i), true
+	default:
+		return 0, false
 	}
 }
 
@@ -264,9 +340,7 @@ func textDocumentDidOpen(context *glsp.Context, params *protocol.DidOpenTextDocu
 		state.Indexer.IndexContent(path, params.TextDocument.Text)
 	}
 
-	if context != nil {
-		go publishDiagnostics(context, params.TextDocument.URI, params.TextDocument.Text)
-	}
+	scheduleDiagnostics(context, params.TextDocument.URI)
 	return nil
 }
 
@@ -281,14 +355,15 @@ func textDocumentDidChange(context *glsp.Context, params *protocol.DidChangeText
 				state.YAMLCache.InvalidateURI(params.TextDocument.URI)
 			}
 
-			// Workspace index/store mutations only apply to file:// URIs.
+
+			// Workspace indexing can be expensive on every keystroke.
+			// Debounce index updates for file:// URIs; on-save events still reindex immediately.
 			if path, ok := fileURIPath(params.TextDocument.URI); ok {
-				state.Store.RemoveByFilePath(path)
-				state.Indexer.IndexContent(path, change.Text)
+				scheduleIndexUpdate(params.TextDocument.URI, path)
 			}
 
 			if context != nil {
-				go publishDiagnostics(context, params.TextDocument.URI, change.Text)
+				scheduleDiagnostics(context, params.TextDocument.URI)
 			}
 		} else {
 			// Fallback or log error if type assertion fails
@@ -300,14 +375,12 @@ func textDocumentDidChange(context *glsp.Context, params *protocol.DidChangeText
 					state.YAMLCache.InvalidateURI(params.TextDocument.URI)
 				}
 
-				// Workspace index/store mutations only apply to file:// URIs.
 				if path, ok := fileURIPath(params.TextDocument.URI); ok {
-					state.Store.RemoveByFilePath(path)
-					state.Indexer.IndexContent(path, changeWhole.Text)
+					scheduleIndexUpdate(params.TextDocument.URI, path)
 				}
 
 				if context != nil {
-					go publishDiagnostics(context, params.TextDocument.URI, changeWhole.Text)
+					scheduleDiagnostics(context, params.TextDocument.URI)
 				}
 			}
 		}
@@ -341,6 +414,8 @@ func workspaceDidChangeWatchedFiles(context *glsp.Context, params *protocol.DidC
 				b, err := os.ReadFile(path)
 				if err != nil {
 					log.Warn().Err(err).Str("path", path).Msg("Failed to read changed file; treating as delete")
+					state.cancelIndex(uri)
+					state.cancelDiagnostics(uri)
 					state.Store.RemoveByFilePath(path)
 					if state.YAMLCache != nil {
 						state.YAMLCache.InvalidateURI(uri)
@@ -363,13 +438,14 @@ func workspaceDidChangeWatchedFiles(context *glsp.Context, params *protocol.DidC
 			if state.YAMLCache != nil {
 				state.YAMLCache.InvalidateURI(uri)
 			}
+			state.cancelIndex(uri)
 			state.Store.RemoveByFilePath(path)
 			state.Indexer.IndexContent(path, content)
-			if context != nil {
-				go publishDiagnostics(context, uri, content)
-			}
+			scheduleDiagnostics(context, uri)
 
 		case protocol.FileChangeTypeDeleted:
+			state.cancelDiagnostics(uri)
+			state.cancelIndex(uri)
 			state.Store.RemoveByFilePath(path)
 			if state.YAMLCache != nil {
 				state.YAMLCache.InvalidateURI(uri)
@@ -385,6 +461,40 @@ func workspaceDidChangeWatchedFiles(context *glsp.Context, params *protocol.DidC
 		}
 	}
 	return nil
+}
+
+func (s *ServerState) cancelDiagnostics(uri string) {
+	if s == nil || uri == "" {
+		return
+	}
+	s.diagMu.Lock()
+	defer s.diagMu.Unlock()
+	if s.diagTimers != nil {
+		if t, ok := s.diagTimers[uri]; ok && t != nil {
+			t.Stop()
+			delete(s.diagTimers, uri)
+		}
+	}
+	if s.diagLatest != nil {
+		delete(s.diagLatest, uri)
+	}
+}
+
+func (s *ServerState) cancelIndex(uri string) {
+	if s == nil || uri == "" {
+		return
+	}
+	s.indexMu.Lock()
+	defer s.indexMu.Unlock()
+	if s.indexTimers != nil {
+		if t, ok := s.indexTimers[uri]; ok && t != nil {
+			t.Stop()
+			delete(s.indexTimers, uri)
+		}
+	}
+	if s.indexLatest != nil {
+		delete(s.indexLatest, uri)
+	}
 }
 
 func fileURIPath(uri string) (string, bool) {
@@ -591,6 +701,123 @@ func publishDiagnostics(context *glsp.Context, uri string, content string) {
 		URI:         uri,
 		Diagnostics: diagnostics,
 	})
+}
+
+func scheduleDiagnostics(context *glsp.Context, uri string) {
+	if context == nil || uri == "" {
+		return
+	}
+	if state == nil || state.Validator == nil {
+		return
+	}
+	content, ok := state.Documents[uri]
+	if !ok {
+		return
+	}
+
+	debounce := state.DiagnosticsDebounce
+	if debounce < 0 {
+		debounce = 0
+	}
+
+	state.diagMu.Lock()
+	if state.diagTimers == nil {
+		state.diagTimers = make(map[string]*time.Timer)
+	}
+	if state.diagLatest == nil {
+		state.diagLatest = make(map[string]diagRequest)
+	}
+	if state.diagSeq == nil {
+		state.diagSeq = make(map[string]uint64)
+	}
+
+	state.diagSeq[uri]++
+	seq := state.diagSeq[uri]
+	state.diagLatest[uri] = diagRequest{seq: seq, uri: uri, content: content}
+
+	if t, ok := state.diagTimers[uri]; ok && t != nil {
+		t.Stop()
+	}
+	if debounce == 0 {
+		state.diagMu.Unlock()
+		publishDiagnostics(context, uri, content)
+		return
+	}
+
+	state.diagTimers[uri] = time.AfterFunc(debounce, func() {
+		state.diagMu.Lock()
+		req, ok := state.diagLatest[uri]
+		if !ok || req.seq != seq {
+			state.diagMu.Unlock()
+			return
+		}
+		// Keep latest so subsequent changes can overwrite and reschedule.
+		content := req.content
+		state.diagMu.Unlock()
+
+		publishDiagnostics(context, uri, content)
+	})
+	state.diagMu.Unlock()
+}
+
+func scheduleIndexUpdate(uri string, path string) {
+	if uri == "" || path == "" {
+		return
+	}
+	if state == nil || state.Indexer == nil || state.Store == nil {
+		return
+	}
+	content, ok := state.Documents[uri]
+	if !ok {
+		return
+	}
+
+	debounce := state.IndexDebounce
+	if debounce < 0 {
+		debounce = 0
+	}
+
+	state.indexMu.Lock()
+	if state.indexTimers == nil {
+		state.indexTimers = make(map[string]*time.Timer)
+	}
+	if state.indexLatest == nil {
+		state.indexLatest = make(map[string]indexRequest)
+	}
+	if state.indexSeq == nil {
+		state.indexSeq = make(map[string]uint64)
+	}
+
+	state.indexSeq[uri]++
+	seq := state.indexSeq[uri]
+	state.indexLatest[uri] = indexRequest{seq: seq, uri: uri, path: path, content: content}
+
+	if t, ok := state.indexTimers[uri]; ok && t != nil {
+		t.Stop()
+	}
+
+	if debounce == 0 {
+		state.indexMu.Unlock()
+		state.Store.RemoveByFilePath(path)
+		state.Indexer.IndexContent(path, content)
+		return
+	}
+
+	state.indexTimers[uri] = time.AfterFunc(debounce, func() {
+		state.indexMu.Lock()
+		req, ok := state.indexLatest[uri]
+		if !ok || req.seq != seq {
+			state.indexMu.Unlock()
+			return
+		}
+		p := req.path
+		c := req.content
+		state.indexMu.Unlock()
+
+		state.Store.RemoveByFilePath(p)
+		state.Indexer.IndexContent(p, c)
+	})
+	state.indexMu.Unlock()
 }
 
 func textDocumentHover(context *glsp.Context, params *protocol.HoverParams) (*protocol.Hover, error) {
