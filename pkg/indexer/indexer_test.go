@@ -163,6 +163,47 @@ metadata:
 	}
 }
 
+func TestIndexContent_ReplacesFileResources(t *testing.T) {
+	cfg := &config.Config{
+		Symbols: []config.Symbol{
+			{
+				Name: "k8s.resource.name",
+				Definitions: []config.SymbolDefinition{
+					{Kinds: []string{"ServiceAccount"}, Path: "metadata.name"},
+				},
+			},
+		},
+	}
+	store := NewStore()
+	idx := NewIndexer(store, cfg)
+
+	// Simulate live edits where metadata.namespace changes over time.
+	first := `
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: User1
+  namespace: d
+`
+	second := `
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: User1
+  namespace: dataplatform
+`
+
+	idx.IndexContent("sa.yaml", first)
+	idx.IndexContent("sa.yaml", second)
+
+	if got := store.Get("ServiceAccount", "d", "User1"); got != nil {
+		t.Fatalf("expected stale ServiceAccount in namespace 'd' to be removed")
+	}
+	if got := store.Get("ServiceAccount", "dataplatform", "User1"); got == nil {
+		t.Fatalf("expected ServiceAccount in namespace 'dataplatform' to be indexed")
+	}
+}
+
 func TestConcurrentAccess(t *testing.T) {
 	cfg := &config.Config{
 		Symbols: []config.Symbol{

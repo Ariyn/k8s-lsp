@@ -68,6 +68,14 @@ func (i *Indexer) IndexContent(path, content string) bool {
 }
 
 func (i *Indexer) indexReader(r io.Reader, path string) bool {
+	// Re-indexing the same file (especially during live edits) must replace prior
+	// resources originating from that file. Otherwise, edits that temporarily set
+	// metadata.namespace to partial prefixes (e.g. "d", "data", "dataplatform")
+	// can accumulate as stale entries and pollute completion results.
+	if i != nil && i.Store != nil && path != "" {
+		i.Store.RemoveByFilePath(path)
+	}
+
 	decoder := yaml.NewDecoder(r)
 	indexed := false
 	for {
