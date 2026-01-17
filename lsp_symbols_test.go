@@ -73,8 +73,7 @@ func TestDocumentSymbol_MultiDoc(t *testing.T) {
 
 	uri := "file:///x.yaml"
 	content := "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: cm1\n  namespace: default\n---\napiVersion: v1\nkind: Namespace\nmetadata:\n  name: ns1\n"
-	state.Documents[uri] = content
-	state.DocVersion[uri] = 1
+	state.setDocument(uri, content, 1)
 
 	res, err := textDocumentDocumentSymbol(nil, &protocol.DocumentSymbolParams{TextDocument: protocol.TextDocumentIdentifier{URI: uri}})
 	if err != nil {

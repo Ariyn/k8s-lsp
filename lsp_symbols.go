@@ -16,14 +16,14 @@ import (
 
 func textDocumentDocumentSymbol(context *glsp.Context, params *protocol.DocumentSymbolParams) (any, error) {
 	uri := params.TextDocument.URI
-	content, ok := state.Documents[uri]
+	state.setNotifyContext(context)
+	content, _, ok := state.getDocument(uri)
 	if !ok {
 		// Disk fallback for file:// URIs.
 		if parsed, err := url.Parse(uri); err == nil && parsed.Scheme == "file" {
 			if b, err := os.ReadFile(parsed.Path); err == nil {
 				content = string(b)
-				state.Documents[uri] = content
-				state.DocVersion[uri] = 0
+				state.setDocument(uri, content, 0)
 			}
 		}
 	}
@@ -31,7 +31,7 @@ func textDocumentDocumentSymbol(context *glsp.Context, params *protocol.Document
 		return nil, nil
 	}
 
-	ver := state.DocVersion[uri]
+	_, ver, _ := state.getDocument(uri)
 	stream, err := state.YAMLCache.Get(uri, ver, content)
 	if err != nil {
 		log.Error().Err(err).Msg("Failed to parse YAML for documentSymbol")
