@@ -52,3 +52,44 @@ func TestDownloadAll_UsesCacheOn304(t *testing.T) {
 		t.Fatalf("expected same cache path")
 	}
 }
+
+func TestDownloadAll_AcceptsLocalFilePath(t *testing.T) {
+	dir := t.TempDir()
+	crdPath := filepath.Join(dir, "crd.yaml")
+	if err := os.WriteFile(crdPath, []byte("apiVersion: apiextensions.k8s.io/v1\nkind: CustomResourceDefinition\nmetadata:\n  name: widgets.example.com\nspec:\n  group: example.com\n  names:\n    kind: Widget\n"), 0o644); err != nil {
+		t.Fatalf("failed to write temp CRD: %v", err)
+	}
+
+	opts := DefaultOptions()
+	paths, err := DownloadAll([]string{crdPath}, opts)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(paths) != 1 {
+		t.Fatalf("expected 1 path, got %d", len(paths))
+	}
+	if filepath.Clean(paths[0]) != filepath.Clean(crdPath) {
+		t.Fatalf("expected returned path to match input file path")
+	}
+}
+
+func TestDownloadAll_AcceptsFileURI(t *testing.T) {
+	dir := t.TempDir()
+	crdPath := filepath.Join(dir, "crd.yaml")
+	if err := os.WriteFile(crdPath, []byte("apiVersion: apiextensions.k8s.io/v1\nkind: CustomResourceDefinition\nmetadata:\n  name: widgets.example.com\nspec:\n  group: example.com\n  names:\n    kind: Widget\n"), 0o644); err != nil {
+		t.Fatalf("failed to write temp CRD: %v", err)
+	}
+
+	uri := "file://" + crdPath
+	opts := DefaultOptions()
+	paths, err := DownloadAll([]string{uri}, opts)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(paths) != 1 {
+		t.Fatalf("expected 1 path, got %d", len(paths))
+	}
+	if filepath.Clean(paths[0]) != filepath.Clean(crdPath) {
+		t.Fatalf("expected returned path to match file URI path")
+	}
+}

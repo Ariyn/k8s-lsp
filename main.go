@@ -42,6 +42,7 @@ type ServerState struct {
 	YAMLCache  *yamlstream.Cache
 	RootPath   string
 	CRDSources []string
+	SchemaSources []string
 
 	scanMu      sync.Mutex
 	scanStarted bool
@@ -117,6 +118,34 @@ func main() {
 	idx := indexer.NewIndexer(store, cfg)
 	schemas := schema.NewRegistry()
 	schema.RegisterBuiltins(schemas)
+	// Load schema packs shipped alongside the server binary (configPath/schemas/*.yaml).
+	// This is the default mechanism for providing schemas for core/built-in resources.
+	if schemas != nil {
+		schemasDir := filepath.Join(configPath, "schemas")
+		loaded := 0
+		_ = filepath.Walk(schemasDir, func(p string, info os.FileInfo, err error) error {
+			if err != nil {
+				return nil
+			}
+			if info == nil || info.IsDir() {
+				return nil
+			}
+			ext := strings.ToLower(filepath.Ext(p))
+			if ext != ".yaml" && ext != ".yml" {
+				return nil
+			}
+			n, err := schema.LoadGVKSchemasFromFile(schemas, p)
+			if err != nil {
+				log.Warn().Err(err).Str("path", p).Msg("Failed to load local schema pack")
+				return nil
+			}
+			loaded += n
+			return nil
+		})
+		if loaded > 0 {
+			log.Info().Int("schemas", loaded).Msg("Loaded local schema packs")
+		}
+	}
 	res := resolver.NewResolver(store, cfg, schemas)
 
 	val, err := validator.NewValidator(filepath.Join(configPath, "rules/validation.yaml"), store)
@@ -200,12 +229,16 @@ func initialize(context *glsp.Context, params *protocol.InitializeParams) (any, 
 	log.Info().Str("root", state.RootPath).Msg("Initializing...")
 
 	// Read initializationOptions from the client (VS Code extension).
-	// Expected shape: { crdSources: string[], diagnosticsDebounceMs?: number, indexDebounceMs?: number }
+	// Expected shape:
+	//   { crdSources?: string[], schemaSources?: string[], diagnosticsDebounceMs?: number, indexDebounceMs?: number }
 	if params != nil {
 		if raw := params.InitializationOptions; raw != nil {
 			if m, ok := raw.(map[string]any); ok {
 				if v, ok := m["crdSources"]; ok {
 					state.CRDSources = toStringSlice(v)
+				}
+				if v, ok := m["schemaSources"]; ok {
+					state.SchemaSources = toStringSlice(v)
 				}
 				if v, ok := m["diagnosticsDebounceMs"]; ok {
 					if ms, ok := toInt(v); ok {
@@ -236,6 +269,9 @@ func initialize(context *glsp.Context, params *protocol.InitializeParams) (any, 
 	}
 	if len(state.CRDSources) > 0 {
 		log.Info().Int("count", len(state.CRDSources)).Msg("Configured CRD sources")
+	}
+	if len(state.SchemaSources) > 0 {
+		log.Info().Int("count", len(state.SchemaSources)).Msg("Configured schema sources")
 	}
 
 	return protocol.InitializeResult{
@@ -316,6 +352,30 @@ func initialized(context *glsp.Context, params *protocol.InitializedParams) erro
 			}
 			if loaded > 0 {
 				log.Info().Int("schemas", loaded).Msg("Loaded CRD schemas")
+			}
+		}
+	}
+
+	// Preload additional YAML schema packs for built-in resources.
+	// This lets users define core GVK schemas (OpenAPIV3) in plain YAML, similar to CRDs.
+	if state != nil && len(state.SchemaSources) > 0 {
+		opts := crd.DefaultOptions()
+		paths, err := crd.DownloadAll(state.SchemaSources, opts)
+		if err != nil {
+			log.Warn().Err(err).Msg("Schema source preload had errors")
+		}
+		if state.Schemas != nil {
+			loaded := 0
+			for _, p := range paths {
+				n, err := schema.LoadGVKSchemasFromFile(state.Schemas, p)
+				if err != nil {
+					log.Warn().Err(err).Str("path", p).Msg("Failed to load schema pack")
+					continue
+				}
+				loaded += n
+			}
+			if loaded > 0 {
+				log.Info().Int("schemas", loaded).Msg("Loaded schema pack schemas")
 			}
 		}
 	}

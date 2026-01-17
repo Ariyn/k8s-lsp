@@ -105,6 +105,7 @@ export function activate(context: ExtensionContext) {
     documentSelector: [{ scheme: 'file', language: 'yaml' }],
     initializationOptions: {
       crdSources: workspace.getConfiguration('k8sLsp').get<string[]>('crdSources') ?? [],
+      schemaSources: workspace.getConfiguration('k8sLsp').get<string[]>('schemaSources') ?? [],
       diagnosticsDebounceMs: workspace.getConfiguration('k8sLsp').get<number>('diagnosticsDebounceMs'),
       indexDebounceMs: workspace.getConfiguration('k8sLsp').get<number>('indexDebounceMs')
     },

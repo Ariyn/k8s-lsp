@@ -87,7 +87,16 @@
           "items": {
             "type": "string"
           },
-          "description": "List of URLs to Kubernetes CRD YAML manifests to download and index (e.g. Traefik CRDs)."
+          "description": "List of Kubernetes CRD YAML sources (https:// URLs, file paths, or file:// URIs) to load and index (e.g. Traefik CRDs)."
+        },
+        "k8sLsp.schemaSources": {
+          "scope": "resource",
+          "type": "array",
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "description": "List of YAML schema packs (https:// URLs, file paths, or file:// URIs) that provide OpenAPIV3 schemas for core/built-in resources by GVK."
         },
         "k8sLsp.serverPath": {
           "scope": "machine",

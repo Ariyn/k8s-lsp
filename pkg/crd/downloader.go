@@ -105,7 +105,24 @@ func downloadOne(client *http.Client, rawURL string, opts DownloadOptions) (stri
 		return "", fmt.Errorf("invalid CRD URL %q: %w", rawURL, err)
 	}
 
-	scheme := strings.ToLower(u.Scheme)
+	scheme := strings.ToLower(strings.TrimSpace(u.Scheme))
+	// Allow local file paths (empty scheme) and file:// URIs so users can point
+	// at CRD YAMLs checked into the workspace.
+	if scheme == "" || scheme == "file" {
+		p := strings.TrimSpace(u.Path)
+		if p == "" {
+			// url.Parse("relative") puts it in Path; if it's empty, fall back to raw.
+			p = strings.TrimSpace(rawURL)
+		}
+		if p == "" {
+			return "", fmt.Errorf("invalid CRD file path %q", rawURL)
+		}
+		if _, err := os.Stat(p); err != nil {
+			return "", fmt.Errorf("CRD file not found %q: %w", p, err)
+		}
+		return p, nil
+	}
+
 	if scheme != "https" {
 		if !(opts.AllowInsecure && scheme == "http") {
 			return "", fmt.Errorf("CRD URL must be https:// (got %q)", rawURL)

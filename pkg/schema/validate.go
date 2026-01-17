@@ -25,6 +25,13 @@ func validateNode(node *yaml.Node, sch *Node) []protocol.Diagnostic {
 		return nil
 	}
 
+	// TypeAny accepts anything and does not produce schema-based diagnostics.
+	// This is especially important for fallback schemas where we intentionally
+	// don't know the structure (e.g. spec/status for unknown kinds).
+	if sch.Type == TypeAny {
+		return nil
+	}
+
 	// If schema says array but YAML is not a sequence, still type-check scalars/maps.
 	switch node.Kind {
 	case yaml.MappingNode:
