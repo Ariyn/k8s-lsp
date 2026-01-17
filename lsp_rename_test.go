@@ -29,7 +29,7 @@ func TestRename_NamespacedResource_OnlyCurrentNamespaceReferences(t *testing.T) 
 	store.Add(&indexer.K8sResource{Kind: "Deployment", Namespace: "other", Name: "d", FilePath: tmpB.path, References: []indexer.Reference{{Kind: "Secret", Name: "sec-old", Line: 13, Col: 22}}})
 
 	state = &ServerState{Store: store, Documents: map[string]string{}, DocVersion: map[string]int32{}, YAMLCache: yamlstream.NewCache()}
-	state.Documents[uriA] = mustReadFile(t, tmpA.path)
+	state.setDocument(uriA, mustReadFile(t, tmpA.path), 0)
 
 	// Rename must be invoked on Secret definition, not deployment name. We'll call buildRenameWorkspaceEdit directly.
 	ctx := &renameContext{kind: "Secret", oldName: "sec-old", scopeNamespace: "default", clusterScoped: false}
@@ -60,7 +60,7 @@ func TestRename_PersistentVolume_RequiresClaimRefNamespace(t *testing.T) {
 	store := indexer.NewStore()
 	store.Add(&indexer.K8sResource{Kind: "PersistentVolume", Namespace: "", Name: "pv1", FilePath: pvNoClaim.path, Line: 3, Col: 8})
 	state = &ServerState{Store: store, Documents: map[string]string{}, DocVersion: map[string]int32{}, YAMLCache: yamlstream.NewCache()}
-	state.Documents[uri] = mustReadFile(t, pvNoClaim.path)
+	state.setDocument(uri, mustReadFile(t, pvNoClaim.path), 0)
 
 	// Cursor on metadata.name value.
 	params := &protocol.RenameParams{}
@@ -96,8 +96,7 @@ func TestRename_PersistentVolume_WithClaimRefNamespace_OnlyEditsThatNamespace(t 
 	store.Add(&indexer.K8sResource{Kind: "PersistentVolumeClaim", Namespace: "other", Name: "c2", FilePath: pvcOther.path, References: []indexer.Reference{{Kind: "PersistentVolume", Name: "pv1", Line: 6, Col: 14}}})
 
 	state = &ServerState{Store: store, Documents: map[string]string{}, DocVersion: map[string]int32{}, YAMLCache: yamlstream.NewCache()}
-	state.Documents[pvURI] = mustReadFile(t, pv.path)
-	state.DocVersion[pvURI] = 1
+	state.setDocument(pvURI, mustReadFile(t, pv.path), 1)
 
 	params := &protocol.RenameParams{}
 	params.TextDocument.URI = pvURI

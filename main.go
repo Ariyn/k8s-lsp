@@ -39,6 +39,10 @@ type ServerState struct {
 	Schemas    *schema.Registry
 	Documents  map[string]string
 	DocVersion map[string]int32
+	docsMu     sync.RWMutex
+
+	notifyMu  sync.RWMutex
+	notifyCtx *glsp.Context
 	YAMLCache  *yamlstream.Cache
 	RootPath   string
 	CRDSources []string
@@ -75,6 +79,88 @@ type indexRequest struct {
 }
 
 var state *ServerState
+
+type docSnapshot struct {
+	uri     string
+	content string
+	ver     int32
+}
+
+func (s *ServerState) setNotifyContext(ctx *glsp.Context) {
+	if s == nil || ctx == nil {
+		return
+	}
+	s.notifyMu.Lock()
+	s.notifyCtx = ctx
+	s.notifyMu.Unlock()
+}
+
+func (s *ServerState) getNotifyContext() *glsp.Context {
+	if s == nil {
+		return nil
+	}
+	s.notifyMu.RLock()
+	ctx := s.notifyCtx
+	s.notifyMu.RUnlock()
+	return ctx
+}
+
+func (s *ServerState) getDocument(uri string) (content string, ver int32, ok bool) {
+	if s == nil || uri == "" {
+		return "", 0, false
+	}
+	s.docsMu.RLock()
+	content, ok = s.Documents[uri]
+	ver = s.DocVersion[uri]
+	s.docsMu.RUnlock()
+	return content, ver, ok
+}
+
+func (s *ServerState) setDocument(uri string, content string, ver int32) {
+	if s == nil || uri == "" {
+		return
+	}
+	s.docsMu.Lock()
+	s.Documents[uri] = content
+	s.DocVersion[uri] = ver
+	s.docsMu.Unlock()
+}
+
+func (s *ServerState) deleteDocument(uri string) {
+	if s == nil || uri == "" {
+		return
+	}
+	s.docsMu.Lock()
+	delete(s.Documents, uri)
+	delete(s.DocVersion, uri)
+	s.docsMu.Unlock()
+}
+
+func (s *ServerState) snapshotDocuments() []docSnapshot {
+	if s == nil {
+		return nil
+	}
+	s.docsMu.RLock()
+	out := make([]docSnapshot, 0, len(s.Documents))
+	for uri, content := range s.Documents {
+		out = append(out, docSnapshot{uri: uri, content: content, ver: s.DocVersion[uri]})
+	}
+	s.docsMu.RUnlock()
+	return out
+}
+
+func (s *ServerState) refreshDiagnosticsForOpenDocuments() {
+	ctx := s.getNotifyContext()
+	if ctx == nil {
+		return
+	}
+	for _, doc := range s.snapshotDocuments() {
+		if doc.uri == "" || doc.content == "" {
+			continue
+		}
+		publishDiagnostics(ctx, doc.uri, doc.content)
+	}
+}
 
 func main() {
 	// Configure logging to file and stderr
@@ -169,6 +255,9 @@ func main() {
 }
 
 func initialize(context *glsp.Context, params *protocol.InitializeParams) (any, error) {
+	if state != nil {
+		state.setNotifyContext(context)
+	}
 	capabilities := protocol.ServerCapabilities{
 		TextDocumentSync:        protocol.TextDocumentSyncKindFull,
 		DefinitionProvider:      true,
@@ -296,6 +385,9 @@ func toInt(v any) (int, bool) {
 
 func initialized(context *glsp.Context, params *protocol.InitializedParams) error {
 	log.Info().Msg("Client initialized")
+	if state != nil {
+		state.setNotifyContext(context)
+	}
 
 	// Preload CRDs (download -> index -> load schemas) before scanning the workspace.
 	// This ensures dynamic kinds and their schemas are available early.
@@ -342,6 +434,7 @@ func (s *ServerState) startWorkspaceScan() {
 			return
 		}
 		log.Info().Msg("Workspace scan completed")
+		s.refreshDiagnosticsForOpenDocuments()
 	}(s.RootPath, s.ScanDone)
 }
 
@@ -356,8 +449,8 @@ func setTrace(context *glsp.Context, params *protocol.SetTraceParams) error {
 }
 
 func textDocumentDidOpen(context *glsp.Context, params *protocol.DidOpenTextDocumentParams) error {
-	state.Documents[params.TextDocument.URI] = params.TextDocument.Text
-	state.DocVersion[params.TextDocument.URI] = int32(params.TextDocument.Version)
+	state.setNotifyContext(context)
+	state.setDocument(params.TextDocument.URI, params.TextDocument.Text, int32(params.TextDocument.Version))
 	if state.YAMLCache != nil {
 		state.YAMLCache.InvalidateURI(params.TextDocument.URI)
 	}
@@ -379,12 +472,11 @@ func textDocumentDidChange(context *glsp.Context, params *protocol.DidChangeText
 	if len(params.ContentChanges) > 0 {
 		change, ok := params.ContentChanges[0].(protocol.TextDocumentContentChangeEvent)
 		if ok {
-			state.Documents[params.TextDocument.URI] = change.Text
-			state.DocVersion[params.TextDocument.URI] = int32(params.TextDocument.Version)
+			state.setNotifyContext(context)
+			state.setDocument(params.TextDocument.URI, change.Text, int32(params.TextDocument.Version))
 			if state.YAMLCache != nil {
 				state.YAMLCache.InvalidateURI(params.TextDocument.URI)
 			}
-
 
 			// Workspace indexing can be expensive on every keystroke.
 			// Debounce index updates for file:// URIs; on-save events still reindex immediately.
@@ -399,8 +491,8 @@ func textDocumentDidChange(context *glsp.Context, params *protocol.DidChangeText
 			// Fallback or log error if type assertion fails
 			// In some versions it might be TextDocumentContentChangeEventWhole
 			if changeWhole, ok := params.ContentChanges[0].(protocol.TextDocumentContentChangeEventWhole); ok {
-				state.Documents[params.TextDocument.URI] = changeWhole.Text
-				state.DocVersion[params.TextDocument.URI] = int32(params.TextDocument.Version)
+				state.setNotifyContext(context)
+				state.setDocument(params.TextDocument.URI, changeWhole.Text, int32(params.TextDocument.Version))
 				if state.YAMLCache != nil {
 					state.YAMLCache.InvalidateURI(params.TextDocument.URI)
 				}
@@ -439,7 +531,8 @@ func workspaceDidChangeWatchedFiles(context *glsp.Context, params *protocol.DidC
 		switch change.Type {
 		case protocol.FileChangeTypeCreated, protocol.FileChangeTypeChanged:
 			// Prefer in-memory content if the document is open/being edited.
-			content, ok := state.Documents[uri]
+			state.setNotifyContext(context)
+			content, _, ok := state.getDocument(uri)
 			if !ok {
 				b, err := os.ReadFile(path)
 				if err != nil {
@@ -450,8 +543,7 @@ func workspaceDidChangeWatchedFiles(context *glsp.Context, params *protocol.DidC
 					if state.YAMLCache != nil {
 						state.YAMLCache.InvalidateURI(uri)
 					}
-					delete(state.Documents, uri)
-					delete(state.DocVersion, uri)
+					state.deleteDocument(uri)
 					if context != nil {
 						context.Notify("textDocument/publishDiagnostics", protocol.PublishDiagnosticsParams{
 							URI:         uri,
@@ -461,8 +553,7 @@ func workspaceDidChangeWatchedFiles(context *glsp.Context, params *protocol.DidC
 					continue
 				}
 				content = string(b)
-				state.Documents[uri] = content
-				state.DocVersion[uri] = 0
+				state.setDocument(uri, content, 0)
 			}
 
 			if state.YAMLCache != nil {
@@ -480,8 +571,7 @@ func workspaceDidChangeWatchedFiles(context *glsp.Context, params *protocol.DidC
 			if state.YAMLCache != nil {
 				state.YAMLCache.InvalidateURI(uri)
 			}
-			delete(state.Documents, uri)
-			delete(state.DocVersion, uri)
+			state.deleteDocument(uri)
 			if context != nil {
 				context.Notify("textDocument/publishDiagnostics", protocol.PublishDiagnosticsParams{
 					URI:         uri,
@@ -549,7 +639,8 @@ func textDocumentDefinition(context *glsp.Context, params *protocol.DefinitionPa
 
 	uri := params.TextDocument.URI
 	log.Debug().Str("uri", uri).Msg("Looking up document content")
-	content, ok := state.Documents[uri]
+	state.setNotifyContext(context)
+	content, _, ok := state.getDocument(uri)
 	log.Debug().Bool("foundInMemory", ok).Msg("Document content lookup result")
 	if !ok {
 		// Try to read from file if not in memory (e.g. not opened yet but requested?)
@@ -560,8 +651,7 @@ func textDocumentDefinition(context *glsp.Context, params *protocol.DefinitionPa
 			bytes, err := os.ReadFile(parsed.Path)
 			if err == nil {
 				content = string(bytes)
-				state.Documents[uri] = content
-				state.DocVersion[uri] = 0
+				state.setDocument(uri, content, 0)
 			}
 		}
 	}
@@ -577,7 +667,7 @@ func textDocumentDefinition(context *glsp.Context, params *protocol.DefinitionPa
 	state.startWorkspaceScan()
 
 	resolve := func() ([]protocol.LocationLink, error) {
-		ver := state.DocVersion[uri]
+		_, ver, _ := state.getDocument(uri)
 		stream, err := state.YAMLCache.Get(uri, ver, content)
 		if err != nil {
 			return nil, err
@@ -618,15 +708,15 @@ func textDocumentReferences(context *glsp.Context, params *protocol.ReferencePar
 	log.Debug().Str("uri", params.TextDocument.URI).Int("line", int(params.Position.Line)).Int("char", int(params.Position.Character)).Msg("Received references request")
 
 	uri := params.TextDocument.URI
-	content, ok := state.Documents[uri]
+	state.setNotifyContext(context)
+	content, _, ok := state.getDocument(uri)
 	if !ok {
 		parsed, err := url.Parse(uri)
 		if err == nil && parsed.Scheme == "file" {
 			bytes, err := os.ReadFile(parsed.Path)
 			if err == nil {
 				content = string(bytes)
-				state.Documents[uri] = content
-				state.DocVersion[uri] = 0
+				state.setDocument(uri, content, 0)
 			}
 		}
 	}
@@ -638,7 +728,7 @@ func textDocumentReferences(context *glsp.Context, params *protocol.ReferencePar
 	state.startWorkspaceScan()
 
 	resolve := func() ([]protocol.Location, error) {
-		ver := state.DocVersion[uri]
+		_, ver, _ := state.getDocument(uri)
 		stream, err := state.YAMLCache.Get(uri, ver, content)
 		if err != nil {
 			return nil, err
@@ -678,15 +768,15 @@ func textDocumentCompletion(context *glsp.Context, params *protocol.CompletionPa
 	log.Debug().Str("uri", params.TextDocument.URI).Int("line", int(params.Position.Line)).Int("char", int(params.Position.Character)).Msg("Received completion request")
 
 	uri := params.TextDocument.URI
-	content, ok := state.Documents[uri]
+	state.setNotifyContext(context)
+	content, _, ok := state.getDocument(uri)
 	if !ok {
 		parsed, err := url.Parse(uri)
 		if err == nil && parsed.Scheme == "file" {
 			bytes, err := os.ReadFile(parsed.Path)
 			if err == nil {
 				content = string(bytes)
-				state.Documents[uri] = content
-				state.DocVersion[uri] = 0
+				state.setDocument(uri, content, 0)
 			}
 		}
 	}
@@ -695,7 +785,7 @@ func textDocumentCompletion(context *glsp.Context, params *protocol.CompletionPa
 		return nil, nil
 	}
 
-	ver := state.DocVersion[uri]
+	_, ver, _ := state.getDocument(uri)
 	stream, err := state.YAMLCache.Get(uri, ver, content)
 	if err != nil {
 		log.Error().Err(err).Msg("Failed to parse YAML for completion")
@@ -717,7 +807,24 @@ func publishDiagnostics(context *glsp.Context, uri string, content string) {
 	if state.Validator == nil {
 		return
 	}
-	ver := state.DocVersion[uri]
+	state.setNotifyContext(context)
+
+	// Reference-based diagnostics depend on the workspace store.
+	// If the initial workspace scan is still running, wait briefly so we don't
+	// publish stale "not found" warnings that would disappear once indexing finishes.
+	state.startWorkspaceScan()
+	state.scanMu.Lock()
+	scanStarted := state.scanStarted
+	scanDone := state.ScanDone
+	state.scanMu.Unlock()
+	if scanStarted && scanDone != nil {
+		select {
+		case <-scanDone:
+		case <-time.After(1500 * time.Millisecond):
+		}
+	}
+
+	_, ver, _ := state.getDocument(uri)
 	stream, err := state.YAMLCache.Get(uri, ver, content)
 	if err != nil {
 		return
@@ -783,7 +890,8 @@ func scheduleDiagnostics(context *glsp.Context, uri string) {
 	if state == nil || state.Validator == nil {
 		return
 	}
-	content, ok := state.Documents[uri]
+	state.setNotifyContext(context)
+	content, _, ok := state.getDocument(uri)
 	if !ok {
 		return
 	}
@@ -840,7 +948,7 @@ func scheduleIndexUpdate(uri string, path string) {
 	if state == nil || state.Indexer == nil || state.Store == nil {
 		return
 	}
-	content, ok := state.Documents[uri]
+	content, _, ok := state.getDocument(uri)
 	if !ok {
 		return
 	}
@@ -897,15 +1005,15 @@ func textDocumentHover(context *glsp.Context, params *protocol.HoverParams) (*pr
 	log.Debug().Str("uri", params.TextDocument.URI).Int("line", int(params.Position.Line)).Int("char", int(params.Position.Character)).Msg("Received hover request")
 
 	uri := params.TextDocument.URI
-	content, ok := state.Documents[uri]
+	state.setNotifyContext(context)
+	content, _, ok := state.getDocument(uri)
 	if !ok {
 		parsed, err := url.Parse(uri)
 		if err == nil && parsed.Scheme == "file" {
 			bytes, err := os.ReadFile(parsed.Path)
 			if err == nil {
 				content = string(bytes)
-				state.Documents[uri] = content
-				state.DocVersion[uri] = 0
+				state.setDocument(uri, content, 0)
 			}
 		}
 	}
@@ -914,7 +1022,7 @@ func textDocumentHover(context *glsp.Context, params *protocol.HoverParams) (*pr
 		return nil, nil
 	}
 
-	ver := state.DocVersion[uri]
+	_, ver, _ := state.getDocument(uri)
 	stream, err := state.YAMLCache.Get(uri, ver, content)
 	if err != nil {
 		log.Error().Err(err).Msg("Failed to parse YAML for hover")
@@ -973,6 +1081,7 @@ type SaveEmbeddedContentParams struct {
 
 func handleSaveEmbeddedContent(context *glsp.Context, params *SaveEmbeddedContentParams) (any, error) {
 	log.Debug().Str("uri", params.URI).Msg("Received save embedded content request")
+	state.setNotifyContext(context)
 
 	u, err := url.Parse(params.URI)
 	if err != nil {
@@ -1008,14 +1117,14 @@ func handleSaveEmbeddedContent(context *glsp.Context, params *SaveEmbeddedConten
 	}
 	key := string(keyBytes)
 
-	content, ok := state.Documents[sourceURI]
+	content, _, ok := state.getDocument(sourceURI)
 	if !ok {
 		parsed, err := url.Parse(sourceURI)
 		if err == nil && parsed.Scheme == "file" {
 			bytes, err := os.ReadFile(parsed.Path)
 			if err == nil {
 				content = string(bytes)
-				state.Documents[sourceURI] = content
+				state.setDocument(sourceURI, content, 0)
 			}
 		}
 	}
@@ -1042,6 +1151,7 @@ func handleSaveEmbeddedContent(context *glsp.Context, params *SaveEmbeddedConten
 
 func handleEmbeddedContent(context *glsp.Context, params *EmbeddedContentParams) (string, error) {
 	log.Debug().Str("uri", params.URI).Msg("Received embedded content request")
+	state.setNotifyContext(context)
 
 	u, err := url.Parse(params.URI)
 	if err != nil {
@@ -1083,7 +1193,7 @@ func handleEmbeddedContent(context *glsp.Context, params *EmbeddedContentParams)
 
 	log.Debug().Str("source", sourceURI).Str("key", key).Msg("Decoded params")
 
-	content, ok := state.Documents[sourceURI]
+	content, _, ok := state.getDocument(sourceURI)
 	if !ok {
 		// Try to read from disk
 		parsed, err := url.Parse(sourceURI)
@@ -1091,7 +1201,7 @@ func handleEmbeddedContent(context *glsp.Context, params *EmbeddedContentParams)
 			bytes, err := os.ReadFile(parsed.Path)
 			if err == nil {
 				content = string(bytes)
-				state.Documents[sourceURI] = content
+				state.setDocument(sourceURI, content, 0)
 			}
 		}
 	}

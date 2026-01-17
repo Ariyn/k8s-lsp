@@ -25,12 +25,13 @@ var (
 
 func textDocumentCodeAction(context *glsp.Context, params *protocol.CodeActionParams) (any, error) {
 	uri := params.TextDocument.URI
-	content, ok := state.Documents[uri]
+	state.setNotifyContext(context)
+	content, _, ok := state.getDocument(uri)
 	if !ok || content == "" {
 		return nil, nil
 	}
 
-	ver := state.DocVersion[uri]
+	_, ver, _ := state.getDocument(uri)
 	stream, err := state.YAMLCache.Get(uri, ver, content)
 	if err != nil {
 		log.Error().Err(err).Msg("Failed to parse YAML for codeAction")
@@ -459,13 +460,14 @@ func buildResourceMismatchFixActions(uri string, content string, stream *yamlstr
 
 	// Load PV content.
 	pvURI := filePathToURI(pvRes.FilePath)
-	pvContent := state.Documents[pvURI]
+	pvContent, _, _ := state.getDocument(pvURI)
 	if pvContent == "" {
 		b, err := os.ReadFile(pvRes.FilePath)
 		if err != nil {
 			return nil
 		}
 		pvContent = string(b)
+		state.setDocument(pvURI, pvContent, 0)
 	}
 	pvStream, err := yamlstream.Parse(pvContent)
 	if err != nil {

@@ -20,14 +20,14 @@ import (
 
 func textDocumentRename(context *glsp.Context, params *protocol.RenameParams) (*protocol.WorkspaceEdit, error) {
 	uri := params.TextDocument.URI
-	content, ok := state.Documents[uri]
+	state.setNotifyContext(context)
+	content, _, ok := state.getDocument(uri)
 	if !ok {
 		// Try disk as fallback.
 		if parsed, err := url.Parse(uri); err == nil && parsed.Scheme == "file" {
 			if b, err := os.ReadFile(parsed.Path); err == nil {
 				content = string(b)
-				state.Documents[uri] = content
-				state.DocVersion[uri] = 0
+				state.setDocument(uri, content, 0)
 			}
 		}
 	}
@@ -40,7 +40,7 @@ func textDocumentRename(context *glsp.Context, params *protocol.RenameParams) (*
 		return nil, errors.New("newName must not be empty")
 	}
 
-	ver := state.DocVersion[uri]
+	_, ver, _ := state.getDocument(uri)
 	stream, err := state.YAMLCache.Get(uri, ver, content)
 	if err != nil {
 		log.Error().Err(err).Msg("Failed to parse YAML for rename")
@@ -272,13 +272,14 @@ func persistentVolumeConnectedNamespace(pvName string) (string, error) {
 	}
 
 	uri := filePathToURI(pv.FilePath)
-	content := state.Documents[uri]
+	content, _, _ := state.getDocument(uri)
 	if content == "" {
 		b, err := os.ReadFile(pv.FilePath)
 		if err != nil {
 			return "", err
 		}
 		content = string(b)
+		state.setDocument(uri, content, 0)
 	}
 
 	decoder := yaml.NewDecoder(strings.NewReader(content))

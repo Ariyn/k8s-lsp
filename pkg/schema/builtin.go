@@ -41,8 +41,8 @@ func RegisterBuiltins(reg *Registry) {
 			"spec": Obj(map[string]*Node{
 				"restartPolicy": {Type: TypeString, Enum: []string{"Always"}},
 				"containers": Arr(Obj(map[string]*Node{
-					"name":  {Type: TypeString},
-					"image": {Type: TypeString},
+					"name":            {Type: TypeString},
+					"image":           {Type: TypeString},
 					"imagePullPolicy": {Type: TypeString, Enum: []string{"Always", "IfNotPresent", "Never"}},
 					"ports": Arr(Obj(map[string]*Node{
 						"containerPort": {Type: TypeInteger},
@@ -56,7 +56,7 @@ func RegisterBuiltins(reg *Registry) {
 
 	// v1 Service: minimal spec fields + enum completion.
 	service := k8sRoot(Obj(map[string]*Node{
-		"type": {Type: TypeString, Enum: []string{"ClusterIP", "NodePort", "LoadBalancer", "ExternalName"}},
+		"type":     {Type: TypeString, Enum: []string{"ClusterIP", "NodePort", "LoadBalancer", "ExternalName"}},
 		"selector": {Type: TypeObject, AdditionalProperties: &Node{Type: TypeString}},
 		"ports": Arr(Obj(map[string]*Node{
 			"port":       {Type: TypeInteger},
