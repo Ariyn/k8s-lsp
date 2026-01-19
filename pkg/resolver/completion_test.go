@@ -6,9 +6,27 @@ import (
 
 	"k8s-lsp/pkg/config"
 	"k8s-lsp/pkg/indexer"
+	"k8s-lsp/pkg/schema"
 	"k8s-lsp/pkg/yamlstream"
 	"gopkg.in/yaml.v3"
 )
+
+func posAfter(t *testing.T, content, needle string) (line, col int) {
+	t.Helper()
+	idx := strings.Index(content, needle)
+	if idx < 0 {
+		t.Fatalf("needle not found: %q", needle)
+	}
+	pos := idx + len(needle)
+	line = strings.Count(content[:pos], "\n")
+	lastNL := strings.LastIndex(content[:pos], "\n")
+	if lastNL < 0 {
+		col = pos
+		return
+	}
+	col = pos - (lastNL + 1)
+	return
+}
 
 func TestCompletion(t *testing.T) {
 	// 1. Setup Config
@@ -160,6 +178,59 @@ spec:
 	}
 	if len(items) != 2 {
 		t.Fatalf("Expected 2 completion items, got %d", len(items))
+	}
+}
+
+func TestCompletion_SchemaValueEnum_ServiceType(t *testing.T) {
+	cfg := &config.Config{}
+	store := indexer.NewStore()
+	reg := schema.NewRegistry()
+	schema.RegisterBuiltins(reg)
+	r := NewResolver(store, cfg, reg)
+
+	yamlContent := "\napiVersion: v1\nkind: Service\nmetadata:\n  name: svc\nspec:\n  type: "
+	line, col := posAfter(t, yamlContent, "type: ")
+	items, err := r.Completion(yamlContent, line, col)
+	if err != nil {
+		t.Fatalf("Completion failed: %v", err)
+	}
+	if len(items) == 0 {
+		t.Fatalf("Expected completion items, got 0")
+	}
+	found := false
+	for _, it := range items {
+		if it.Label == "ClusterIP" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("Expected to find enum value ClusterIP in completion items")
+	}
+}
+
+func TestCompletion_SchemaValueBoolean_DeploymentPaused(t *testing.T) {
+	cfg := &config.Config{}
+	store := indexer.NewStore()
+	reg := schema.NewRegistry()
+	schema.RegisterBuiltins(reg)
+	r := NewResolver(store, cfg, reg)
+
+	yamlContent := "\napiVersion: apps/v1\nkind: Deployment\nmetadata:\n  name: dep\nspec:\n  paused: "
+	line, col := posAfter(t, yamlContent, "paused: ")
+	items, err := r.Completion(yamlContent, line, col)
+	if err != nil {
+		t.Fatalf("Completion failed: %v", err)
+	}
+	if len(items) < 2 {
+		t.Fatalf("Expected at least 2 completion items, got %d", len(items))
+	}
+	seen := map[string]bool{}
+	for _, it := range items {
+		seen[it.Label] = true
+	}
+	if !seen["true"] || !seen["false"] {
+		t.Fatalf("Expected boolean completions true/false, got: %+v", seen)
 	}
 }
 

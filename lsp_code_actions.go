@@ -21,7 +21,19 @@ import (
 var (
 	reRefNotFound      = regexp.MustCompile(`\(Kind:\s*([^,\)]+),\s*Name:\s*([^\)]+)\)\s*$`)
 	reResourceMismatch = regexp.MustCompile(`^([^:]+):\s*([^\s]+)\s*\(([^\)]*)\)\s*!=\s*([^\s]+)\s*\(([^\)]*)\)\s*$`)
+	yamlPlainSafeRe    = regexp.MustCompile(`^[A-Za-z0-9_.-]+$`)
 )
+
+func yamlQuoteIfNeeded(s string) string {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return "''"
+	}
+	if yamlPlainSafeRe.MatchString(s) {
+		return s
+	}
+	return "'" + strings.ReplaceAll(s, "'", "''") + "'"
+}
 
 func textDocumentCodeAction(context *glsp.Context, params *protocol.CodeActionParams) (any, error) {
 	uri := params.TextDocument.URI
@@ -57,6 +69,12 @@ func textDocumentCodeAction(context *glsp.Context, params *protocol.CodeActionPa
 			continue
 		}
 
+		// 0) Schema diagnostics quick fixes.
+		if actions0 := buildSchemaDiagnosticActions(uri, diag); len(actions0) > 0 {
+			actions = append(actions, actions0...)
+			continue
+		}
+
 		// 1) Missing reference quick fixes.
 		if kind, missingName, ok := parseMissingRefDiagnostic(diag); ok {
 			actions = append(actions, buildReplaceWithExistingActions(uri, diag, kind, currentNamespace)...)
@@ -89,6 +107,122 @@ func textDocumentCodeAction(context *glsp.Context, params *protocol.CodeActionPa
 	})
 
 	return actions, nil
+}
+
+func diagnosticCodeString(d protocol.Diagnostic) string {
+	if d.Code == nil {
+		return ""
+	}
+	if s, ok := d.Code.Value.(string); ok {
+		return s
+	}
+	return ""
+}
+
+func diagnosticSuggestions(d protocol.Diagnostic) []string {
+	if d.Data == nil {
+		return nil
+	}
+	obj, ok := d.Data.(map[string]any)
+	if !ok {
+		return nil
+	}
+	v, ok := obj["suggestions"]
+	if (!ok || v == nil) {
+		// Some producers may use 'allowed' for enums.
+		v, ok = obj["allowed"]
+		if !ok || v == nil {
+			return nil
+		}
+	}
+	// Depending on decode path, this could be []any or []string.
+	if ss, ok := v.([]string); ok {
+		return ss
+	}
+	arr, ok := v.([]any)
+	if !ok {
+		return nil
+	}
+	out := make([]string, 0, len(arr))
+	for _, it := range arr {
+		if s, ok := it.(string); ok && strings.TrimSpace(s) != "" {
+			out = append(out, s)
+		}
+	}
+	return out
+}
+
+func diagnosticExpectedType(d protocol.Diagnostic) string {
+	if d.Data == nil {
+		return ""
+	}
+	obj, ok := d.Data.(map[string]any)
+	if !ok {
+		return ""
+	}
+	v, ok := obj["expectedType"]
+	if !ok || v == nil {
+		return ""
+	}
+	if s, ok := v.(string); ok {
+		return strings.TrimSpace(s)
+	}
+	return ""
+}
+
+func buildSchemaDiagnosticActions(uri string, diag protocol.Diagnostic) []protocol.CodeAction {
+	code := diagnosticCodeString(diag)
+	suggestions := diagnosticSuggestions(diag)
+	if len(suggestions) == 0 {
+		return nil
+	}
+
+	expectedType := diagnosticExpectedType(diag)
+	kindQuickFix := protocol.CodeActionKindQuickFix
+	preferred := true
+
+	limit := 10
+	if len(suggestions) < limit {
+		limit = len(suggestions)
+	}
+
+	var actions []protocol.CodeAction
+	for i := 0; i < limit; i++ {
+		s := strings.TrimSpace(suggestions[i])
+		if s == "" {
+			continue
+		}
+		newText := s
+		if expectedType == "string" {
+			newText = yamlQuoteIfNeeded(s)
+		}
+		repl := protocol.TextEdit{Range: diag.Range, NewText: newText}
+		ed := protocol.WorkspaceEdit{Changes: map[string][]protocol.TextEdit{uri: {repl}}}
+
+		title := ""
+		switch code {
+		case "k8s.schema.unknownField":
+			title = fmt.Sprintf("Rename field to %q", s)
+		case "k8s.schema.enumMismatch":
+			title = fmt.Sprintf("Replace with %q", s)
+		case "k8s.schema.typeMismatch":
+			title = fmt.Sprintf("Replace with %q", s)
+		default:
+			return nil
+		}
+
+		a := protocol.CodeAction{
+			Title:       title,
+			Kind:        &kindQuickFix,
+			Diagnostics: []protocol.Diagnostic{diag},
+			Edit:        &ed,
+		}
+		if i == 0 {
+			a.IsPreferred = &preferred
+		}
+		actions = append(actions, a)
+	}
+	return actions
 }
 
 type resourceMismatch struct {
@@ -219,6 +353,31 @@ func buildFixAllAction(uri string, docContent string, stream *yamlstream.Stream,
 		if diag.Source == nil || *diag.Source != lsName {
 			continue
 		}
+
+		// Schema unknown-field: apply only when exactly one safe suggestion exists.
+		if diagnosticCodeString(diag) == "k8s.schema.unknownField" {
+			s := diagnosticSuggestions(diag)
+			if len(s) == 1 {
+				edits = append(edits, protocol.TextEdit{Range: diag.Range, NewText: s[0]})
+			}
+			continue
+		}
+
+		// Schema enum/type mismatch: apply only when exactly one safe suggestion exists.
+		if c := diagnosticCodeString(diag); c == "k8s.schema.enumMismatch" || c == "k8s.schema.typeMismatch" {
+			s := diagnosticSuggestions(diag)
+			if len(s) == 1 {
+				newText := strings.TrimSpace(s[0])
+				if diagnosticExpectedType(diag) == "string" {
+					newText = yamlQuoteIfNeeded(newText)
+				}
+				if newText != "" {
+					edits = append(edits, protocol.TextEdit{Range: diag.Range, NewText: newText})
+				}
+			}
+			continue
+		}
+
 		kind, _, ok := parseMissingRefDiagnostic(diag)
 		if !ok {
 			continue

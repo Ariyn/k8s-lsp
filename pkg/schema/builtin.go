@@ -33,6 +33,7 @@ func RegisterBuiltins(reg *Registry) {
 	// apps/v1 Deployment: only a thin slice required to make completion useful.
 	deployment := k8sRoot(Obj(map[string]*Node{
 		"replicas": {Type: TypeInteger, Description: "Number of desired pods."},
+		"paused":   {Type: TypeBoolean, Description: "Indicates that the deployment is paused."},
 		"selector": Obj(map[string]*Node{
 			"matchLabels": {Type: TypeObject, AdditionalProperties: &Node{Type: TypeString}},
 		}),
