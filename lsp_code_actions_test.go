@@ -159,6 +159,148 @@ func TestBuildFixAllAction_SkipsAmbiguous(t *testing.T) {
 	}
 }
 
+func TestBuildSchemaUnknownFieldActions_RenamesField(t *testing.T) {
+	uri := "file:///x.yaml"
+	src := lsName
+	code := protocol.IntegerOrString{Value: "k8s.schema.unknownField"}
+	// Range doesn't need to be exact for this unit test.
+	diag := protocol.Diagnostic{
+		Source: &src,
+		Code:   &code,
+		Range:  protocol.Range{Start: protocol.Position{Line: 2, Character: 0}, End: protocol.Position{Line: 2, Character: 7}},
+		Data:   map[string]any{"suggestions": []string{"metadata"}},
+		Message: "Unknown field \"metdata\"",
+	}
+
+	actions := buildSchemaDiagnosticActions(uri, diag)
+	if len(actions) != 1 {
+		t.Fatalf("expected 1 action, got %d", len(actions))
+	}
+	if actions[0].Edit == nil || actions[0].Edit.Changes == nil {
+		t.Fatalf("expected edit")
+	}
+	edits := actions[0].Edit.Changes[uri]
+	if len(edits) != 1 {
+		t.Fatalf("expected 1 edit")
+	}
+	if edits[0].NewText != "metadata" {
+		t.Fatalf("unexpected new text: %q", edits[0].NewText)
+	}
+}
+
+func TestBuildFixAllAction_AppliesSchemaUnknownField_WhenUnambiguous(t *testing.T) {
+	store := indexer.NewStore()
+	state = &ServerState{Store: store, Documents: map[string]string{}, DocVersion: map[string]int32{}, YAMLCache: yamlstream.NewCache()}
+
+	uri := "file:///x.yaml"
+	content := "apiVersion: apps/v1\nkind: Deployment\nmetdata:\n  name: dep\nspec: {}\n"
+	stream, _ := yamlstream.Parse(content)
+
+	src := lsName
+	code := protocol.IntegerOrString{Value: "k8s.schema.unknownField"}
+	diags := []protocol.Diagnostic{{
+		Source:  &src,
+		Code:    &code,
+		Range:   protocol.Range{Start: protocol.Position{Line: 2, Character: 0}, End: protocol.Position{Line: 2, Character: 7}},
+		Data:    map[string]any{"suggestions": []string{"metadata"}},
+		Message: "Unknown field \"metdata\"",
+	}}
+
+	ca := buildFixAllAction(uri, content, stream, "default", diags)
+	if ca == nil || ca.Edit == nil {
+		t.Fatalf("expected fixAll action")
+	}
+	if len(ca.Edit.Changes[uri]) != 1 {
+		t.Fatalf("expected 1 edit")
+	}
+	if ca.Edit.Changes[uri][0].NewText != "metadata" {
+		t.Fatalf("unexpected fix text: %q", ca.Edit.Changes[uri][0].NewText)
+	}
+}
+
+func TestBuildSchemaEnumMismatchActions_ReplacesWithAllowedValue(t *testing.T) {
+	uri := "file:///x.yaml"
+	src := lsName
+	code := protocol.IntegerOrString{Value: "k8s.schema.enumMismatch"}
+	diag := protocol.Diagnostic{
+		Source:  &src,
+		Code:    &code,
+		Range:   protocol.Range{Start: protocol.Position{Line: 6, Character: 8}, End: protocol.Position{Line: 6, Character: 16}},
+		Data:    map[string]any{"expectedType": "string", "allowed": []string{"ClusterIP", "NodePort"}, "suggestions": []string{"ClusterIP", "NodePort"}},
+		Message: "Invalid value \"CluserIP\" (allowed: ClusterIP, NodePort)",
+	}
+
+	actions := buildSchemaDiagnosticActions(uri, diag)
+	if len(actions) < 1 {
+		t.Fatalf("expected actions")
+	}
+	if actions[0].Edit == nil || actions[0].Edit.Changes == nil {
+		t.Fatalf("expected edit")
+	}
+	edits := actions[0].Edit.Changes[uri]
+	if len(edits) != 1 {
+		t.Fatalf("expected 1 edit")
+	}
+	// For plain scalars, we keep unquoted text.
+	if edits[0].NewText != "ClusterIP" {
+		t.Fatalf("unexpected replacement: %q", edits[0].NewText)
+	}
+}
+
+func TestBuildSchemaTypeMismatchActions_SuggestsScalarFixes(t *testing.T) {
+	uri := "file:///x.yaml"
+	src := lsName
+	code := protocol.IntegerOrString{Value: "k8s.schema.typeMismatch"}
+	diag := protocol.Diagnostic{
+		Source:  &src,
+		Code:    &code,
+		Range:   protocol.Range{Start: protocol.Position{Line: 7, Character: 12}, End: protocol.Position{Line: 7, Character: 20}},
+		Data:    map[string]any{"expectedType": "integer", "gotType": "string", "suggestions": []string{"0", "1"}},
+		Message: "Type mismatch: expected integer, got string",
+	}
+
+	actions := buildSchemaDiagnosticActions(uri, diag)
+	if len(actions) < 2 {
+		t.Fatalf("expected at least 2 actions, got %d", len(actions))
+	}
+	if actions[0].Edit == nil || actions[0].Edit.Changes == nil {
+		t.Fatalf("expected edit")
+	}
+	if actions[0].Edit.Changes[uri][0].NewText != "0" {
+		t.Fatalf("unexpected first replacement: %q", actions[0].Edit.Changes[uri][0].NewText)
+	}
+}
+
+func TestBuildFixAllAction_AppliesSchemaEnumMismatch_WhenUnambiguous(t *testing.T) {
+	store := indexer.NewStore()
+	state = &ServerState{Store: store, Documents: map[string]string{}, DocVersion: map[string]int32{}, YAMLCache: yamlstream.NewCache()}
+
+	uri := "file:///x.yaml"
+	content := "apiVersion: v1\nkind: Service\nmetadata:\n  name: svc\nspec:\n  type: CluserIP\n"
+	stream, _ := yamlstream.Parse(content)
+
+	src := lsName
+	code := protocol.IntegerOrString{Value: "k8s.schema.enumMismatch"}
+	diags := []protocol.Diagnostic{{
+		Source:  &src,
+		Code:    &code,
+		Range:   protocol.Range{Start: protocol.Position{Line: 5, Character: 8}, End: protocol.Position{Line: 5, Character: 16}},
+		Data:    map[string]any{"expectedType": "string", "allowed": []string{"ClusterIP"}, "suggestions": []string{"ClusterIP"}},
+		Message: "Invalid value \"CluserIP\" (allowed: ClusterIP)",
+	}}
+
+	ca := buildFixAllAction(uri, content, stream, "default", diags)
+	if ca == nil || ca.Edit == nil {
+		t.Fatalf("expected fixAll action")
+	}
+	if len(ca.Edit.Changes[uri]) != 1 {
+		t.Fatalf("expected 1 edit")
+	}
+	if ca.Edit.Changes[uri][0].NewText != "ClusterIP" {
+		t.Fatalf("unexpected fix text: %q", ca.Edit.Changes[uri][0].NewText)
+	}
+}
+
 func TestBuildCreateMissingResourceAction_AppendsStub(t *testing.T) {
 	uri := "file:///x.yaml"
 	content := "apiVersion: v1\nkind: Deployment\nmetadata:\n  name: d\n"

@@ -1,9 +1,11 @@
 package resolver
 
 import (
+	"fmt"
 	"k8s-lsp/pkg/indexer"
 	"k8s-lsp/pkg/schema"
 	"k8s-lsp/pkg/yamlstream"
+	"regexp"
 	"sort"
 	"strings"
 
@@ -11,6 +13,122 @@ import (
 	protocol "github.com/tliron/glsp/protocol_3_16"
 	"gopkg.in/yaml.v3"
 )
+
+var yamlPlainSafeRe = regexp.MustCompile(`^[A-Za-z0-9_.-]+$`)
+
+func yamlQuoteIfNeeded(s string) string {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return "''"
+	}
+	// Keep plain scalars when safe to avoid noisy quoting.
+	// YAML has many edge cases; we use a conservative allowlist here.
+	if yamlPlainSafeRe.MatchString(s) {
+		return s
+	}
+	// Single-quote escape: '' inside single quotes.
+	return "'" + strings.ReplaceAll(s, "'", "''") + "'"
+}
+
+func schemaValueCompletionItems(fieldSchema *schema.Node) []protocol.CompletionItem {
+	if fieldSchema == nil {
+		return nil
+	}
+
+	doc := any(nil)
+	if strings.TrimSpace(fieldSchema.Description) != "" {
+		doc = fieldSchema.Description
+	}
+
+	add := func(label string, kind protocol.CompletionItemKind, detail string, insertText *string, sortText *string) protocol.CompletionItem {
+		ci := protocol.CompletionItem{Label: label, Kind: &kind}
+		if strings.TrimSpace(detail) != "" {
+			ci.Detail = &detail
+		}
+		if insertText != nil {
+			ci.InsertText = insertText
+		}
+		if sortText != nil {
+			ci.SortText = sortText
+		}
+		if doc != nil {
+			ci.Documentation = doc
+		}
+		return ci
+	}
+
+	var items []protocol.CompletionItem
+
+	// Default: offer first when present.
+	if strings.TrimSpace(fieldSchema.Default) != "" {
+		knd := protocol.CompletionItemKindValue
+		insert := fieldSchema.Default
+		if fieldSchema.Type == schema.TypeString {
+			insert = yamlQuoteIfNeeded(insert)
+		}
+		detail := "Default"
+		sortText := "0"
+		items = append(items, add(fieldSchema.Default, knd, detail, &insert, &sortText))
+	}
+
+	// Enums
+	if len(fieldSchema.Enum) > 0 {
+		vals := append([]string(nil), fieldSchema.Enum...)
+		sort.Strings(vals)
+		for i, v := range vals {
+			knd := protocol.CompletionItemKindEnumMember
+			detail := "Enum value"
+			insert := v
+			if fieldSchema.Type == schema.TypeString {
+				insert = yamlQuoteIfNeeded(v)
+			}
+			sortText := fmt.Sprintf("1-%03d", i)
+			items = append(items, add(v, knd, detail, &insert, &sortText))
+		}
+		return items
+	}
+
+	// Primitive types
+	switch fieldSchema.Type {
+	case schema.TypeBoolean:
+		knd := protocol.CompletionItemKindKeyword
+		detail := "Boolean"
+		st1, st2 := "1", "2"
+		tv, fv := "true", "false"
+		items = append(items, add("true", knd, detail, &tv, &st1))
+		items = append(items, add("false", knd, detail, &fv, &st2))
+		return items
+	case schema.TypeNull:
+		knd := protocol.CompletionItemKindKeyword
+		detail := "Null"
+		st := "1"
+		nv := "null"
+		items = append(items, add("null", knd, detail, &nv, &st))
+		return items
+	case schema.TypeInteger:
+		knd := protocol.CompletionItemKindValue
+		detail := "Integer"
+		st1, st2 := "1", "2"
+		z, o := "0", "1"
+		items = append(items, add("0", knd, detail, &z, &st1))
+		items = append(items, add("1", knd, detail, &o, &st2))
+		return items
+	case schema.TypeNumber:
+		knd := protocol.CompletionItemKindValue
+		detail := "Number"
+		st1, st2, st3 := "1", "2", "3"
+		z, h, o := "0", "0.5", "1"
+		items = append(items, add("0", knd, detail, &z, &st1))
+		items = append(items, add("0.5", knd, detail, &h, &st2))
+		items = append(items, add("1", knd, detail, &o, &st3))
+		return items
+	case schema.TypeString:
+		// No generic suggestions for free-form strings.
+		return nil
+	default:
+		return nil
+	}
+}
 
 func normalizeNamespace(ns string) string {
 	if ns == "" {
@@ -347,14 +465,9 @@ func (r *Resolver) schemaCompletion(docNode *yaml.Node, targetNode *yaml.Node, p
 	if fieldSchema == nil {
 		return nil
 	}
-	if len(fieldSchema.Enum) == 0 {
+	// Only offer value completions for scalars.
+	if targetNode.Kind != yaml.ScalarNode {
 		return nil
 	}
-	items := make([]protocol.CompletionItem, 0, len(fieldSchema.Enum))
-	for _, v := range fieldSchema.Enum {
-		knd := protocol.CompletionItemKindEnumMember
-		detail := "Enum value"
-		items = append(items, protocol.CompletionItem{Label: v, Kind: &knd, Detail: &detail})
-	}
-	return items
+	return schemaValueCompletionItems(fieldSchema)
 }
