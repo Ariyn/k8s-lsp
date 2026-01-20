@@ -71,7 +71,9 @@ func loadCRDSchemaFromDoc(reg *Registry, doc *yaml.Node) int {
 	if names != nil {
 		crKind = getMapScalar(names, "kind")
 	}
-	if group == "" || crKind == "" {
+	// Note: real CRDs require a non-empty group, but we also support
+	// CRD-like local schema documents for core-group kinds (group: "").
+	if crKind == "" {
 		return 0
 	}
 

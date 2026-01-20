@@ -1,0 +1,42 @@
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: storageclasses.storage.k8s.io
+spec:
+  group: storage.k8s.io
+  scope: Cluster
+  names:
+    kind: StorageClass
+    plural: storageclasses
+  versions:
+    - name: v1
+      served: true
+      storage: false
+      schema:
+        openAPIV3Schema:
+          type: object
+          properties:
+            apiVersion:
+              type: string
+            kind:
+              type: string
+            metadata:
+              type: object
+              x-kubernetes-preserve-unknown-fields: true
+            provisioner:
+              type: string
+            parameters:
+              type: object
+              additionalProperties:
+                type: string
+            reclaimPolicy:
+              type: string
+            volumeBindingMode:
+              type: string
+            allowVolumeExpansion:
+              type: boolean
+            mountOptions:
+              type: array
+              items:
+                type: string
+          additionalProperties: false

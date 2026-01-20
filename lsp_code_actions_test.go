@@ -165,10 +165,10 @@ func TestBuildSchemaUnknownFieldActions_RenamesField(t *testing.T) {
 	code := protocol.IntegerOrString{Value: "k8s.schema.unknownField"}
 	// Range doesn't need to be exact for this unit test.
 	diag := protocol.Diagnostic{
-		Source: &src,
-		Code:   &code,
-		Range:  protocol.Range{Start: protocol.Position{Line: 2, Character: 0}, End: protocol.Position{Line: 2, Character: 7}},
-		Data:   map[string]any{"suggestions": []string{"metadata"}},
+		Source:  &src,
+		Code:    &code,
+		Range:   protocol.Range{Start: protocol.Position{Line: 2, Character: 0}, End: protocol.Position{Line: 2, Character: 7}},
+		Data:    map[string]any{"suggestions": []string{"metadata"}},
 		Message: "Unknown field \"metdata\"",
 	}
 

@@ -10,11 +10,15 @@ func RegisterBuiltins(reg *Registry) {
 		return
 	}
 
-	// Minimal fallback schema. Detailed schemas for built-in resources are provided
-	// via schema packs (schemas/*.yaml next to the server binary) or schemaSources.
+	// Common ObjectMeta subset.
+	objectMeta := Obj(map[string]*Node{
+		"name":        {Type: TypeString, Description: "Name must be unique within a namespace."},
+		"namespace":   {Type: TypeString, Description: "Namespace defines the space within which each name must be unique."},
+		"labels":      {Type: TypeObject, AdditionalProperties: &Node{Type: TypeString}, Description: "Map of string keys and values."},
+		"annotations": {Type: TypeObject, AdditionalProperties: &Node{Type: TypeString}, Description: "Map of string keys and values."},
+	})
+
 	reg.Set(GVK{Group: "", Version: "__fallback__", Kind: "KubernetesObject"}, KubernetesObjectFallback())
-<<<<<<< HEAD
-=======
 
 	k8sRoot := func(spec *Node) *Node {
 		return Obj(map[string]*Node{
@@ -50,37 +54,6 @@ func RegisterBuiltins(reg *Registry) {
 		}),
 	}))
 	reg.Set(GVK{Group: "apps", Version: "v1", Kind: "Deployment"}, deployment)
-
-	// v1 Service: minimal spec fields + enum completion.
-	service := k8sRoot(Obj(map[string]*Node{
-		"type":     {Type: TypeString, Enum: []string{"ClusterIP", "NodePort", "LoadBalancer", "ExternalName"}},
-		"selector": {Type: TypeObject, AdditionalProperties: &Node{Type: TypeString}},
-		"ports": Arr(Obj(map[string]*Node{
-			"port":       {Type: TypeInteger},
-			"targetPort": {Type: TypeAny, Description: "Int or string."},
-			"protocol":   {Type: TypeString, Enum: []string{"TCP", "UDP", "SCTP"}},
-			"name":       {Type: TypeString},
-		})),
-	}))
-	reg.Set(GVK{Group: "", Version: "v1", Kind: "Service"}, service)
-
-	// v1 ConfigMap: useful for basic unknown key + data typing.
-	configMap := k8sRoot(Obj(map[string]*Node{
-		"data":       {Type: TypeObject, AdditionalProperties: &Node{Type: TypeString}},
-		"binaryData": {Type: TypeObject, AdditionalProperties: &Node{Type: TypeString}},
-		"immutable":  {Type: TypeBoolean},
-	}))
-	reg.Set(GVK{Group: "", Version: "v1", Kind: "ConfigMap"}, configMap)
-
-	// v1 Secret: minimal.
-	secret := k8sRoot(Obj(map[string]*Node{
-		"type":       {Type: TypeString},
-		"data":       {Type: TypeObject, AdditionalProperties: &Node{Type: TypeString}},
-		"stringData": {Type: TypeObject, AdditionalProperties: &Node{Type: TypeString}},
-		"immutable":  {Type: TypeBoolean},
-	}))
-	reg.Set(GVK{Group: "", Version: "v1", Kind: "Secret"}, secret)
->>>>>>> b6de106 (schema: diagnostics + value completion quick fixes)
 }
 
 // KubernetesObjectFallback returns a generic schema for Kubernetes objects.

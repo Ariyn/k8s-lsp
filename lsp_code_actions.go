@@ -128,7 +128,7 @@ func diagnosticSuggestions(d protocol.Diagnostic) []string {
 		return nil
 	}
 	v, ok := obj["suggestions"]
-	if (!ok || v == nil) {
+	if !ok || v == nil {
 		// Some producers may use 'allowed' for enums.
 		v, ok = obj["allowed"]
 		if !ok || v == nil {
