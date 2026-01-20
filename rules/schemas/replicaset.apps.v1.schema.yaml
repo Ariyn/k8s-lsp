@@ -1,0 +1,396 @@
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: replicasets.apps
+spec:
+  group: apps
+  scope: Namespaced
+  names:
+    kind: ReplicaSet
+    plural: replicasets
+  versions:
+    - name: v1
+      served: true
+      storage: false
+      schema:
+        openAPIV3Schema:
+          type: object
+          properties:
+            apiVersion:
+              type: string
+            kind:
+              type: string
+            metadata:
+              type: object
+              x-kubernetes-preserve-unknown-fields: true
+            spec:
+              type: object
+              properties:
+                replicas:
+                  type: integer
+                selector:
+                  type: object
+                  x-kubernetes-preserve-unknown-fields: true
+                template:
+                  type: object
+                  properties:
+                    metadata:
+                      type: object
+                      x-kubernetes-preserve-unknown-fields: true
+                    spec:
+                      type: object
+                      properties:
+                        restartPolicy:
+                          type: string
+                        serviceAccountName:
+                          type: string
+                        serviceAccount:
+                          type: string
+                        automountServiceAccountToken:
+                          type: boolean
+                        enableServiceLinks:
+                          type: boolean
+                        nodeName:
+                          type: string
+                        nodeSelector:
+                          type: object
+                          additionalProperties:
+                            type: string
+                        hostname:
+                          type: string
+                        subdomain:
+                          type: string
+                        setHostnameAsFQDN:
+                          type: boolean
+                        shareProcessNamespace:
+                          type: boolean
+                        dnsPolicy:
+                          type: string
+                        dnsConfig:
+                          type: object
+                          properties:
+                            nameservers:
+                              type: array
+                              items:
+                                type: string
+                            searches:
+                              type: array
+                              items:
+                                type: string
+                            options:
+                              type: array
+                              items:
+                                type: object
+                                properties:
+                                  name:
+                                    type: string
+                                  value:
+                                    type: string
+                                additionalProperties: true
+                          additionalProperties: true
+                        hostAliases:
+                          type: array
+                          items:
+                            type: object
+                            properties:
+                              ip:
+                                type: string
+                              hostnames:
+                                type: array
+                                items:
+                                  type: string
+                            additionalProperties: true
+                        hostNetwork:
+                          type: boolean
+                        hostPID:
+                          type: boolean
+                        hostIPC:
+                          type: boolean
+                        securityContext:
+                          type: object
+                          x-kubernetes-preserve-unknown-fields: true
+                        affinity:
+                          type: object
+                          x-kubernetes-preserve-unknown-fields: true
+                        tolerations:
+                          type: array
+                          items:
+                            type: object
+                            properties:
+                              key:
+                                type: string
+                              operator:
+                                type: string
+                              value:
+                                type: string
+                              effect:
+                                type: string
+                              tolerationSeconds:
+                                type: integer
+                            additionalProperties: true
+                        terminationGracePeriodSeconds:
+                          type: integer
+                        priorityClassName:
+                          type: string
+                        priority:
+                          type: integer
+                        preemptionPolicy:
+                          type: string
+                        runtimeClassName:
+                          type: string
+                        schedulerName:
+                          type: string
+                        readinessGates:
+                          type: array
+                          items:
+                            type: object
+                            properties:
+                              conditionType:
+                                type: string
+                            additionalProperties: true
+                        os:
+                          type: object
+                          properties:
+                            name:
+                              type: string
+                          additionalProperties: true
+                        topologySpreadConstraints:
+                          type: array
+                          items:
+                            type: object
+                            x-kubernetes-preserve-unknown-fields: true
+                        imagePullSecrets:
+                          type: array
+                          items:
+                            type: object
+                            properties:
+                              name:
+                                type: string
+                            additionalProperties: true
+                        volumes:
+                          type: array
+                          items:
+                            type: object
+                            properties:
+                              name:
+                                type: string
+                              configMap:
+                                type: object
+                                properties:
+                                  name:
+                                    type: string
+                                  defaultMode:
+                                    type: integer
+                                additionalProperties: true
+                              secret:
+                                type: object
+                                properties:
+                                  secretName:
+                                    type: string
+                                  defaultMode:
+                                    type: integer
+                                additionalProperties: true
+                              emptyDir:
+                                type: object
+                                x-kubernetes-preserve-unknown-fields: true
+                              hostPath:
+                                type: object
+                                x-kubernetes-preserve-unknown-fields: true
+                              projected:
+                                type: object
+                                x-kubernetes-preserve-unknown-fields: true
+                              downwardAPI:
+                                type: object
+                                x-kubernetes-preserve-unknown-fields: true
+                              persistentVolumeClaim:
+                                type: object
+                                properties:
+                                  claimName:
+                                    type: string
+                                additionalProperties: true
+                            additionalProperties: true
+                        initContainers:
+                          type: array
+                          items:
+                            type: object
+                            properties:
+                              name:
+                                type: string
+                              image:
+                                type: string
+                              imagePullPolicy:
+                                type: string
+                              command:
+                                type: array
+                                items:
+                                  type: string
+                              args:
+                                type: array
+                                items:
+                                  type: string
+                              workingDir:
+                                type: string
+                              stdin:
+                                type: boolean
+                              stdinOnce:
+                                type: boolean
+                              tty:
+                                type: boolean
+                              ports:
+                                type: array
+                                items:
+                                  type: object
+                                  properties:
+                                    containerPort:
+                                      type: integer
+                                    protocol:
+                                      type: string
+                                  additionalProperties: true
+                              env:
+                                type: array
+                                items:
+                                  type: object
+                                  properties:
+                                    name:
+                                      type: string
+                                    value:
+                                      type: string
+                                    valueFrom:
+                                      type: object
+                                      x-kubernetes-preserve-unknown-fields: true
+                                  additionalProperties: true
+                              envFrom:
+                                type: array
+                                items:
+                                  type: object
+                                  x-kubernetes-preserve-unknown-fields: true
+                              volumeMounts:
+                                type: array
+                                items:
+                                  type: object
+                                  properties:
+                                    name:
+                                      type: string
+                                    mountPath:
+                                      type: string
+                                    subPath:
+                                      type: string
+                                    readOnly:
+                                      type: boolean
+                                  additionalProperties: true
+                              resources:
+                                type: object
+                                x-kubernetes-preserve-unknown-fields: true
+                              securityContext:
+                                type: object
+                                x-kubernetes-preserve-unknown-fields: true
+                              livenessProbe:
+                                type: object
+                                x-kubernetes-preserve-unknown-fields: true
+                              readinessProbe:
+                                type: object
+                                x-kubernetes-preserve-unknown-fields: true
+                              startupProbe:
+                                type: object
+                                x-kubernetes-preserve-unknown-fields: true
+                              lifecycle:
+                                type: object
+                                x-kubernetes-preserve-unknown-fields: true
+                            additionalProperties: true
+                        containers:
+                          type: array
+                          items:
+                            type: object
+                            properties:
+                              name:
+                                type: string
+                              image:
+                                type: string
+                              imagePullPolicy:
+                                type: string
+                              command:
+                                type: array
+                                items:
+                                  type: string
+                              args:
+                                type: array
+                                items:
+                                  type: string
+                              workingDir:
+                                type: string
+                              stdin:
+                                type: boolean
+                              stdinOnce:
+                                type: boolean
+                              tty:
+                                type: boolean
+                              ports:
+                                type: array
+                                items:
+                                  type: object
+                                  properties:
+                                    containerPort:
+                                      type: integer
+                                    protocol:
+                                      type: string
+                                  additionalProperties: true
+                              env:
+                                type: array
+                                items:
+                                  type: object
+                                  properties:
+                                    name:
+                                      type: string
+                                    value:
+                                      type: string
+                                    valueFrom:
+                                      type: object
+                                      x-kubernetes-preserve-unknown-fields: true
+                                  additionalProperties: true
+                              envFrom:
+                                type: array
+                                items:
+                                  type: object
+                                  x-kubernetes-preserve-unknown-fields: true
+                              volumeMounts:
+                                type: array
+                                items:
+                                  type: object
+                                  properties:
+                                    name:
+                                      type: string
+                                    mountPath:
+                                      type: string
+                                    subPath:
+                                      type: string
+                                    readOnly:
+                                      type: boolean
+                                  additionalProperties: true
+                              resources:
+                                type: object
+                                x-kubernetes-preserve-unknown-fields: true
+                              securityContext:
+                                type: object
+                                x-kubernetes-preserve-unknown-fields: true
+                              livenessProbe:
+                                type: object
+                                x-kubernetes-preserve-unknown-fields: true
+                              readinessProbe:
+                                type: object
+                                x-kubernetes-preserve-unknown-fields: true
+                              startupProbe:
+                                type: object
+                                x-kubernetes-preserve-unknown-fields: true
+                              lifecycle:
+                                type: object
+                                x-kubernetes-preserve-unknown-fields: true
+                            additionalProperties: true
+                        ephemeralContainers:
+                          type: array
+                          items:
+                            type: object
+                            x-kubernetes-preserve-unknown-fields: true
+                      additionalProperties: true
+                  additionalProperties: true
+              additionalProperties: true
+          additionalProperties: false

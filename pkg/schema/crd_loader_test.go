@@ -1,6 +1,11 @@
 package schema
 
-import "testing"
+import (
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+)
 
 func TestLoadCRDSchemas_Composed_oneOf_MergesProperties(t *testing.T) {
 	reg := NewRegistry()
@@ -111,5 +116,37 @@ func TestValidateDocument_ComposedSchema_UnknownFieldStillWorks(t *testing.T) {
 	diags := ValidateDocument(doc, root)
 	if len(diags) == 0 {
 		t.Fatalf("expected unknown-field diagnostic")
+	}
+}
+
+func TestLoadLocalSchemaDirectory_AllYAMLParse(t *testing.T) {
+	reg := NewRegistry()
+	RegisterBuiltins(reg)
+
+	schemasDir := filepath.Join("..", "..", "rules", "schemas")
+	entries, err := os.ReadDir(schemasDir)
+	if err != nil {
+		// If the directory doesn't exist (e.g., in minimal test env), don't fail.
+		// In this repo it should exist.
+		t.Fatalf("failed to read %q: %v", schemasDir, err)
+	}
+	loaded := 0
+	for _, ent := range entries {
+		if ent == nil || ent.IsDir() {
+			continue
+		}
+		ext := strings.ToLower(filepath.Ext(ent.Name()))
+		if ext != ".yaml" && ext != ".yml" {
+			continue
+		}
+		p := filepath.Join(schemasDir, ent.Name())
+		n, err := LoadCRDSchemasFromFile(reg, p)
+		if err != nil {
+			t.Fatalf("failed to load schema %q: %v", p, err)
+		}
+		loaded += n
+	}
+	if loaded == 0 {
+		t.Fatalf("expected at least 1 schema loaded from %q", schemasDir)
 	}
 }

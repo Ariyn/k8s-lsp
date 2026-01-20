@@ -1,6 +1,7 @@
 package resolver
 
 import (
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -8,6 +9,7 @@ import (
 	"k8s-lsp/pkg/indexer"
 	"k8s-lsp/pkg/schema"
 	"k8s-lsp/pkg/yamlstream"
+
 	"gopkg.in/yaml.v3"
 )
 
@@ -186,6 +188,7 @@ func TestCompletion_SchemaValueEnum_ServiceType(t *testing.T) {
 	store := indexer.NewStore()
 	reg := schema.NewRegistry()
 	schema.RegisterBuiltins(reg)
+	_, _ = schema.LoadCRDSchemasFromFile(reg, filepath.Join("..", "..", "rules", "schemas", "service.core.v1.schema.yaml"))
 	r := NewResolver(store, cfg, reg)
 
 	yamlContent := "\napiVersion: v1\nkind: Service\nmetadata:\n  name: svc\nspec:\n  type: "

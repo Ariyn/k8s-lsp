@@ -44,8 +44,8 @@ func filePathToURI(path string) string {
 }
 
 type Resolver struct {
-	Store  *indexer.Store
-	Config *config.Config
+	Store   *indexer.Store
+	Config  *config.Config
 	Schemas *schema.Registry
 }
 

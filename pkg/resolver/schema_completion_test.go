@@ -1,6 +1,7 @@
 package resolver
 
 import (
+	"path/filepath"
 	"testing"
 
 	"k8s-lsp/pkg/config"
@@ -13,6 +14,7 @@ func TestCompletion_Schema_KeyCompletion_DeploymentPodSpec(t *testing.T) {
 	store := indexer.NewStore()
 	reg := schema.NewRegistry()
 	schema.RegisterBuiltins(reg)
+	_, _ = schema.LoadCRDSchemasFromFile(reg, filepath.Join("..", "..", "rules", "schemas", "deployment.apps.v1.schema.yaml"))
 
 	r := NewResolver(store, cfg, reg)
 
@@ -55,6 +57,7 @@ func TestCompletion_Schema_EnumValueCompletion_ServiceType(t *testing.T) {
 	store := indexer.NewStore()
 	reg := schema.NewRegistry()
 	schema.RegisterBuiltins(reg)
+	_, _ = schema.LoadCRDSchemasFromFile(reg, filepath.Join("..", "..", "rules", "schemas", "service.core.v1.schema.yaml"))
 
 	r := NewResolver(store, cfg, reg)
 

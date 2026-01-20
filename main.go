@@ -41,8 +41,8 @@ type ServerState struct {
 	DocVersion map[string]int32
 	docsMu     sync.RWMutex
 
-	notifyMu  sync.RWMutex
-	notifyCtx *glsp.Context
+	notifyMu   sync.RWMutex
+	notifyCtx  *glsp.Context
 	YAMLCache  *yamlstream.Cache
 	RootPath   string
 	CRDSources []string

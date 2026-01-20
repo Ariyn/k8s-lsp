@@ -1,0 +1,57 @@
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: persistentvolumes
+spec:
+  group: ""
+  scope: Cluster
+  names:
+    kind: PersistentVolume
+    plural: persistentvolumes
+  versions:
+    - name: v1
+      served: true
+      storage: false
+      schema:
+        openAPIV3Schema:
+          type: object
+          properties:
+            apiVersion:
+              type: string
+            kind:
+              type: string
+            metadata:
+              type: object
+              x-kubernetes-preserve-unknown-fields: true
+            spec:
+              type: object
+              properties:
+                capacity:
+                  type: object
+                  properties:
+                    storage:
+                      type: string
+                  additionalProperties: true
+                accessModes:
+                  type: array
+                  items:
+                    type: string
+                storageClassName:
+                  type: string
+                persistentVolumeReclaimPolicy:
+                  type: string
+                volumeMode:
+                  type: string
+                claimRef:
+                  type: object
+                  properties:
+                    namespace:
+                      type: string
+                    name:
+                      type: string
+                  additionalProperties: true
+              additionalProperties: true
+            status:
+              type: object
+              x-kubernetes-preserve-unknown-fields: true
+          additionalProperties: false
