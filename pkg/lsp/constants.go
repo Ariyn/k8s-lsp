@@ -1,4 +1,4 @@
-package main
+package lsp
 
 const lsName = "k8s-lsp"
 
