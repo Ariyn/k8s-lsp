@@ -21,16 +21,7 @@ import (
 func textDocumentRename(context *glsp.Context, params *protocol.RenameParams) (*protocol.WorkspaceEdit, error) {
 	uri := params.TextDocument.URI
 	state.setNotifyContext(context)
-	content, _, ok := state.getDocument(uri)
-	if !ok {
-		// Try disk as fallback.
-		if parsed, err := url.Parse(uri); err == nil && parsed.Scheme == "file" {
-			if b, err := os.ReadFile(parsed.Path); err == nil {
-				content = string(b)
-				state.setDocument(uri, content, 0)
-			}
-		}
-	}
+	content, _, _ := getOrLoadDocument(uri)
 	if strings.TrimSpace(content) == "" {
 		return nil, nil
 	}
@@ -40,8 +31,7 @@ func textDocumentRename(context *glsp.Context, params *protocol.RenameParams) (*
 		return nil, errors.New("newName must not be empty")
 	}
 
-	_, ver, _ := state.getDocument(uri)
-	stream, err := state.YAMLCache.Get(uri, ver, content)
+	stream, err := getYAMLStreamForContent(uri, content)
 	if err != nil {
 		log.Error().Err(err).Msg("Failed to parse YAML for rename")
 		return nil, nil
