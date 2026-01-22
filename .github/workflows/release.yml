@@ -104,6 +104,14 @@ jobs:
         
         mkdir -p build/bin/windows/x64
         cp -r bin-temp/server-binaries-windows-x64/* build/bin/windows/x64/
+
+        # Copy schema packs next to each server binary so the server auto-loads them.
+        if [ -d schemas ]; then
+          for dir in build/bin/*/*; do
+            mkdir -p "$dir/schemas"
+            cp -r schemas/. "$dir/schemas/"
+          done
+        fi
         
         # Verify structure
         ls -R build/bin
