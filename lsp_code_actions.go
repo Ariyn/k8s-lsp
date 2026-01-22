@@ -43,8 +43,7 @@ func textDocumentCodeAction(context *glsp.Context, params *protocol.CodeActionPa
 		return nil, nil
 	}
 
-	_, ver, _ := state.getDocument(uri)
-	stream, err := state.YAMLCache.Get(uri, ver, content)
+	stream, err := getYAMLStreamForContent(uri, content)
 	if err != nil {
 		log.Error().Err(err).Msg("Failed to parse YAML for codeAction")
 		return nil, nil
