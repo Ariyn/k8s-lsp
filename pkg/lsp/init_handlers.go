@@ -5,9 +5,6 @@ import (
 	"net/url"
 	"time"
 
-	"k8s-lsp/pkg/crd"
-	"k8s-lsp/pkg/schema"
-
 	"github.com/rs/zerolog/log"
 	"github.com/tliron/glsp"
 	protocol "github.com/tliron/glsp/protocol_3_16"
@@ -155,52 +152,9 @@ func initialized(context *glsp.Context, params *protocol.InitializedParams) erro
 		state.setNotifyContext(context)
 	}
 
-	// Preload CRDs (download -> index -> load schemas) before scanning the workspace.
-	// This ensures dynamic kinds and their schemas are available early.
-	if state != nil && len(state.CRDSources) > 0 {
-		paths, err := crd.DownloadAndIndex(state.Indexer, state.CRDSources)
-		if err != nil {
-			log.Warn().Err(err).Msg("CRD preload had errors")
-		}
-		if state.Schemas != nil {
-			loaded := 0
-			for _, p := range paths {
-				n, err := schema.LoadCRDSchemasFromFile(state.Schemas, p)
-				if err != nil {
-					log.Warn().Err(err).Str("path", p).Msg("Failed to load CRD schema")
-					continue
-				}
-				loaded += n
-			}
-			if loaded > 0 {
-				log.Info().Int("schemas", loaded).Msg("Loaded CRD schemas")
-			}
-		}
-	}
-
-	// Preload additional YAML schema packs for built-in resources.
-	// This lets users define core GVK schemas (OpenAPIV3) in plain YAML, similar to CRDs.
-	if state != nil && len(state.SchemaSources) > 0 {
-		opts := crd.DefaultOptions()
-		paths, err := crd.DownloadAll(state.SchemaSources, opts)
-		if err != nil {
-			log.Warn().Err(err).Msg("Schema source preload had errors")
-		}
-		if state.Schemas != nil {
-			loaded := 0
-			for _, p := range paths {
-				n, err := schema.LoadGVKSchemasFromFile(state.Schemas, p)
-				if err != nil {
-					log.Warn().Err(err).Str("path", p).Msg("Failed to load schema pack")
-					continue
-				}
-				loaded += n
-			}
-			if loaded > 0 {
-				log.Info().Int("schemas", loaded).Msg("Loaded schema pack schemas")
-			}
-		}
-	}
+	// Build the effective schema registry (builtins + local packs + CRDs + schema packs)
+	// before scanning the workspace so dynamic kinds and their schemas are available early.
+	reloadSchemasAndCRDs(context)
 
 	state.startWorkspaceScan()
 	return nil

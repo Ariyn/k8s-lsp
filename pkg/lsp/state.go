@@ -32,6 +32,10 @@ type ServerState struct {
 	CRDSources    []string
 	SchemaSources []string
 
+	reloadMu            sync.Mutex
+	loadedCRDPaths      []string
+	loadedSchemaPackPaths []string
+
 	scanMu      sync.Mutex
 	scanStarted bool
 	ScanDone    chan struct{}

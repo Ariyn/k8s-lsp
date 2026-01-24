@@ -75,6 +75,7 @@ func Run() {
 		TextDocumentCodeAction:         textDocumentCodeAction,
 		TextDocumentRename:             textDocumentRename,
 		TextDocumentDidSave:            textDocumentDidSave,
+		WorkspaceDidChangeConfiguration: workspaceDidChangeConfiguration,
 		WorkspaceDidChangeWatchedFiles: workspaceDidChangeWatchedFiles,
 		WorkspaceSymbol:                workspaceSymbol,
 		WorkspaceExecuteCommand:        workspaceExecuteCommand,

@@ -159,11 +159,36 @@ export function activate(context: ExtensionContext) {
     client
       .start()
       .then(() => {
+
+        const currentServerSettings = () => ({
+          crdSources: workspace.getConfiguration('k8sLsp').get<string[]>('crdSources') ?? [],
+          schemaSources: workspace.getConfiguration('k8sLsp').get<string[]>('schemaSources') ?? [],
+          diagnosticsDebounceMs: workspace.getConfiguration('k8sLsp').get<number>('diagnosticsDebounceMs'),
+          indexDebounceMs: workspace.getConfiguration('k8sLsp').get<number>('indexDebounceMs')
+        });
+
+        const sendServerSettings = () => {
+          client.sendNotification('workspace/didChangeConfiguration', {
+            settings: currentServerSettings()
+          });
+        };
+
         const provider = new K8sFileSystemProvider(client);
         context.subscriptions.push(workspace.registerFileSystemProvider('k8s-embedded', provider, {
           isCaseSensitive: true,
           isReadonly: false
         }));
+
+        // Keep the server in sync with runtime configuration changes.
+        // This enables schema/CRD source reloads without requiring a restart.
+        sendServerSettings();
+        context.subscriptions.push(
+          workspace.onDidChangeConfiguration((e) => {
+            if (e.affectsConfiguration('k8sLsp')) {
+              sendServerSettings();
+            }
+          })
+        );
 
         context.subscriptions.push(
           commands.registerCommand('k8sLsp.openEmbeddedFile', async (args: any) => {

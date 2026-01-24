@@ -85,8 +85,18 @@ func workspaceDidChangeWatchedFiles(context *glsp.Context, params *protocol.DidC
 		if !ok {
 			continue
 		}
+		path = filepath.Clean(path)
 		ext := strings.ToLower(filepath.Ext(path))
 		if ext != ".yaml" && ext != ".yml" {
+			continue
+		}
+
+		// If the changed file is a configured local schema/CRD source, reload schemas and
+		// refresh diagnostics rather than indexing it as a workspace document.
+		if isConfiguredLocalSourceFile(path) {
+			state.setNotifyContext(context)
+			reloadSchemasAndCRDs(context)
+			state.refreshDiagnosticsForOpenDocuments()
 			continue
 		}
 
