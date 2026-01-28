@@ -14,13 +14,21 @@ func initialize(context *glsp.Context, params *protocol.InitializeParams) (any, 
 	if state != nil {
 		state.setNotifyContext(context)
 	}
+	resolveProvider := false
+	docLinkResolve := false
 	capabilities := protocol.ServerCapabilities{
 		TextDocumentSync:          protocol.TextDocumentSyncKindFull,
 		DefinitionProvider:        true,
 		ReferencesProvider:        true,
 		DocumentHighlightProvider: true,
-		DocumentSymbolProvider:    true,
-		WorkspaceSymbolProvider:   true,
+		DocumentLinkProvider: &protocol.DocumentLinkOptions{
+			ResolveProvider: &docLinkResolve,
+		},
+		CodeLensProvider: &protocol.CodeLensOptions{
+			ResolveProvider: &resolveProvider,
+		},
+		DocumentSymbolProvider:  true,
+		WorkspaceSymbolProvider: true,
 		CompletionProvider: &protocol.CompletionOptions{
 			TriggerCharacters: []string{":", " "},
 		},
@@ -75,6 +83,20 @@ func initialize(context *glsp.Context, params *protocol.InitializeParams) (any, 
 					if v, ok := rv["enabled"]; ok {
 						if b, ok := v.(bool); ok {
 							state.ReferencesVisualizationEnabled = b
+						}
+					}
+				}
+				if cl, ok := m["codeLens"].(map[string]any); ok {
+					if v, ok := cl["enabled"]; ok {
+						if b, ok := v.(bool); ok {
+							state.CodeLensEnabled = b
+						}
+					}
+				}
+				if dl, ok := m["documentLinks"].(map[string]any); ok {
+					if v, ok := dl["enabled"]; ok {
+						if b, ok := v.(bool); ok {
+							state.DocumentLinksEnabled = b
 						}
 					}
 				}

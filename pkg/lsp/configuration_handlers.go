@@ -48,6 +48,20 @@ func workspaceDidChangeConfiguration(context *glsp.Context, params *protocol.Did
 			}
 		}
 	}
+	if cl, ok := m["codeLens"].(map[string]any); ok {
+		if v, ok := cl["enabled"]; ok {
+			if b, ok := v.(bool); ok {
+				state.CodeLensEnabled = b
+			}
+		}
+	}
+	if dl, ok := m["documentLinks"].(map[string]any); ok {
+		if v, ok := dl["enabled"]; ok {
+			if b, ok := v.(bool); ok {
+				state.DocumentLinksEnabled = b
+			}
+		}
+	}
 
 	sourcesChanged := !stringSliceEqual(state.CRDSources, newCRDSources) || !stringSliceEqual(state.SchemaSources, newSchemaSources)
 	state.CRDSources = newCRDSources

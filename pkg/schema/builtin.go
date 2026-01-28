@@ -13,7 +13,7 @@ func RegisterBuiltins(reg *Registry) {
 	// Common ObjectMeta subset.
 	objectMeta := Obj(map[string]*Node{
 		"name":        {Type: TypeString, Description: "Name must be unique within a namespace.", Ref: &RefMeta{Role: RefRoleDefinition}},
-		"namespace":   {Type: TypeString, Description: "Namespace defines the space within which each name must be unique."},
+		"namespace":   {Type: TypeString, Description: "Namespace defines the space within which each name must be unique.", Ref: &RefMeta{Role: RefRoleReference, Kind: "Namespace", Scope: "cluster"}},
 		"labels":      {Type: TypeObject, AdditionalProperties: &Node{Type: TypeString}, Description: "Map of string keys and values."},
 		"annotations": {Type: TypeObject, AdditionalProperties: &Node{Type: TypeString}, Description: "Map of string keys and values."},
 	})
@@ -40,11 +40,47 @@ func RegisterBuiltins(reg *Registry) {
 		"template": Obj(map[string]*Node{
 			"metadata": objectMeta,
 			"spec": Obj(map[string]*Node{
-				"restartPolicy": {Type: TypeString, Enum: []string{"Always"}},
+				"restartPolicy":      {Type: TypeString, Enum: []string{"Always"}},
+				"serviceAccountName": {Type: TypeString, Ref: &RefMeta{Role: RefRoleReference, Kind: "ServiceAccount"}},
+				"imagePullSecrets": Arr(Obj(map[string]*Node{
+					"name": {Type: TypeString, Ref: &RefMeta{Role: RefRoleReference, Kind: "Secret"}},
+				})),
+				"volumes": Arr(Obj(map[string]*Node{
+					"configMap": Obj(map[string]*Node{
+						"name": {Type: TypeString, Ref: &RefMeta{Role: RefRoleReference, Kind: "ConfigMap"}},
+					}),
+					"secret": Obj(map[string]*Node{
+						"secretName": {Type: TypeString, Ref: &RefMeta{Role: RefRoleReference, Kind: "Secret"}},
+					}),
+					"persistentVolumeClaim": Obj(map[string]*Node{
+						"claimName": {Type: TypeString, Ref: &RefMeta{Role: RefRoleReference, Kind: "PersistentVolumeClaim"}},
+					}),
+				})),
 				"containers": Arr(Obj(map[string]*Node{
 					"name":            {Type: TypeString},
 					"image":           {Type: TypeString},
 					"imagePullPolicy": {Type: TypeString, Enum: []string{"Always", "IfNotPresent", "Never"}},
+					"env": Arr(Obj(map[string]*Node{
+						"name": {Type: TypeString},
+						"valueFrom": Obj(map[string]*Node{
+							"configMapKeyRef": Obj(map[string]*Node{
+								"name": {Type: TypeString, Ref: &RefMeta{Role: RefRoleReference, Kind: "ConfigMap"}},
+								"key":  {Type: TypeString},
+							}),
+							"secretKeyRef": Obj(map[string]*Node{
+								"name": {Type: TypeString, Ref: &RefMeta{Role: RefRoleReference, Kind: "Secret"}},
+								"key":  {Type: TypeString},
+							}),
+						}),
+					})),
+					"envFrom": Arr(Obj(map[string]*Node{
+						"configMapRef": Obj(map[string]*Node{
+							"name": {Type: TypeString, Ref: &RefMeta{Role: RefRoleReference, Kind: "ConfigMap"}},
+						}),
+						"secretRef": Obj(map[string]*Node{
+							"name": {Type: TypeString, Ref: &RefMeta{Role: RefRoleReference, Kind: "Secret"}},
+						}),
+					})),
 					"ports": Arr(Obj(map[string]*Node{
 						"containerPort": {Type: TypeInteger},
 						"protocol":      {Type: TypeString, Enum: []string{"TCP", "UDP", "SCTP"}},
@@ -63,7 +99,7 @@ func RegisterBuiltins(reg *Registry) {
 func KubernetesObjectFallback() *Node {
 	objectMeta := Obj(map[string]*Node{
 		"name":        {Type: TypeString, Description: "Name must be unique within a namespace.", Ref: &RefMeta{Role: RefRoleDefinition}},
-		"namespace":   {Type: TypeString, Description: "Namespace defines the space within which each name must be unique."},
+		"namespace":   {Type: TypeString, Description: "Namespace defines the space within which each name must be unique.", Ref: &RefMeta{Role: RefRoleReference, Kind: "Namespace", Scope: "cluster"}},
 		"labels":      {Type: TypeObject, AdditionalProperties: &Node{Type: TypeString}},
 		"annotations": {Type: TypeObject, AdditionalProperties: &Node{Type: TypeString}},
 	})

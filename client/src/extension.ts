@@ -113,6 +113,12 @@ export function activate(context: ExtensionContext) {
       },
       referencesVisualization: {
         enabled: workspace.getConfiguration('k8sLsp').get<boolean>('referencesVisualization.enabled')
+      },
+      codeLens: {
+        enabled: workspace.getConfiguration('k8sLsp').get<boolean>('codeLens.enabled')
+      },
+      documentLinks: {
+        enabled: workspace.getConfiguration('k8sLsp').get<boolean>('documentLinks.enabled')
       }
     },
     synchronize: {
@@ -176,6 +182,12 @@ export function activate(context: ExtensionContext) {
           },
           referencesVisualization: {
             enabled: workspace.getConfiguration('k8sLsp').get<boolean>('referencesVisualization.enabled')
+          },
+          codeLens: {
+            enabled: workspace.getConfiguration('k8sLsp').get<boolean>('codeLens.enabled')
+          },
+          documentLinks: {
+            enabled: workspace.getConfiguration('k8sLsp').get<boolean>('documentLinks.enabled')
           }
         });
 
@@ -247,6 +259,90 @@ export function activate(context: ExtensionContext) {
             }
 
             await commands.executeCommand('editor.action.showReferences', uri, position, vscodeLocations);
+          })
+        );
+
+        const asVscodeLocations = async (lspItems: any[]): Promise<any[]> => {
+          const out: any[] = [];
+          if (!Array.isArray(lspItems)) {
+            return out;
+          }
+          for (const it of lspItems) {
+            // Prefer protocol2CodeConverter when possible.
+            try {
+              const converted = await (client as any).protocol2CodeConverter.asLocation(it);
+              if (converted) {
+                out.push(converted);
+                continue;
+              }
+            } catch {
+              // Fall through to manual conversion.
+            }
+
+            const targetUri = it?.targetUri ?? it?.uri;
+            const targetRange = it?.targetSelectionRange ?? it?.targetRange ?? it?.range;
+            if (!targetUri || !targetRange) {
+              continue;
+            }
+
+            const uri = Uri.parse(targetUri);
+            const range = new Range(
+              targetRange.start.line,
+              targetRange.start.character,
+              targetRange.end.line,
+              targetRange.end.character
+            );
+            out.push({ uri, range });
+          }
+          return out;
+        };
+
+        context.subscriptions.push(
+          commands.registerCommand('k8sLsp.peekDefinition', async (args: any) => {
+            const uriStr = args?.uri as string | undefined;
+            const pos = args?.position as { line: number; character: number } | undefined;
+            if (!uriStr || !pos) {
+              return;
+            }
+
+            const uri = Uri.parse(uriStr);
+            const position = new Position(pos.line, pos.character);
+
+            const lspLinks = await client.sendRequest<any[]>('textDocument/definition', {
+              textDocument: { uri: uriStr },
+              position: { line: pos.line, character: pos.character }
+            });
+
+            const vscodeLocations = await asVscodeLocations(lspLinks);
+            if (vscodeLocations.length === 0) {
+              return;
+            }
+
+            await commands.executeCommand('editor.action.showReferences', uri, position, vscodeLocations);
+          })
+        );
+
+        context.subscriptions.push(
+          commands.registerCommand('k8sLsp.goToDefinition', async (args: any) => {
+            const uriStr = args?.uri as string | undefined;
+            const pos = args?.position as { line: number; character: number } | undefined;
+            if (!uriStr || !pos) {
+              return;
+            }
+
+            const lspLinks = await client.sendRequest<any[]>('textDocument/definition', {
+              textDocument: { uri: uriStr },
+              position: { line: pos.line, character: pos.character }
+            });
+
+            const vscodeLocations = await asVscodeLocations(lspLinks);
+            if (vscodeLocations.length === 0) {
+              return;
+            }
+
+            const first = vscodeLocations[0];
+            const doc = await workspace.openTextDocument(first.uri);
+            await window.showTextDocument(doc, { selection: first.range, preview: true });
           })
         );
 

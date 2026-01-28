@@ -1,0 +1,416 @@
+# Local schema pack used by k8s-lsp to tag common reference/definition fields.
+#
+# Important: These schemas are intentionally partial; we set
+# x-kubernetes-preserve-unknown-fields on metadata/spec so unknown-field diagnostics
+# remain useful while avoiding noise for the vast Kubernetes surface area.
+---
+group: ""
+version: "v1"
+kind: "Pod"
+openAPIV3Schema:
+  type: object
+  properties:
+    apiVersion: { type: string }
+    kind: { type: string }
+    metadata:
+      type: object
+      x-kubernetes-preserve-unknown-fields: true
+      properties:
+        name:
+          type: string
+          x-k8s-lsp-ref-role: definition
+        namespace:
+          type: string
+          x-k8s-lsp-ref-role: reference
+          x-k8s-lsp-ref-kind: Namespace
+          x-k8s-lsp-ref-scope: cluster
+    spec:
+      type: object
+      x-kubernetes-preserve-unknown-fields: true
+      properties:
+        serviceAccountName:
+          type: string
+          x-k8s-lsp-ref-role: reference
+          x-k8s-lsp-ref-kind: ServiceAccount
+        imagePullSecrets:
+          type: array
+          items:
+            type: object
+            x-kubernetes-preserve-unknown-fields: true
+            properties:
+              name:
+                type: string
+                x-k8s-lsp-ref-role: reference
+                x-k8s-lsp-ref-kind: Secret
+        volumes:
+          type: array
+          items:
+            type: object
+            x-kubernetes-preserve-unknown-fields: true
+            properties:
+              configMap:
+                type: object
+                x-kubernetes-preserve-unknown-fields: true
+                properties:
+                  name:
+                    type: string
+                    x-k8s-lsp-ref-role: reference
+                    x-k8s-lsp-ref-kind: ConfigMap
+              secret:
+                type: object
+                x-kubernetes-preserve-unknown-fields: true
+                properties:
+                  secretName:
+                    type: string
+                    x-k8s-lsp-ref-role: reference
+                    x-k8s-lsp-ref-kind: Secret
+              persistentVolumeClaim:
+                type: object
+                x-kubernetes-preserve-unknown-fields: true
+                properties:
+                  claimName:
+                    type: string
+                    x-k8s-lsp-ref-role: reference
+                    x-k8s-lsp-ref-kind: PersistentVolumeClaim
+        containers:
+          type: array
+          items:
+            type: object
+            x-kubernetes-preserve-unknown-fields: true
+            properties:
+              env:
+                type: array
+                items:
+                  type: object
+                  x-kubernetes-preserve-unknown-fields: true
+                  properties:
+                    valueFrom:
+                      type: object
+                      x-kubernetes-preserve-unknown-fields: true
+                      properties:
+                        configMapKeyRef:
+                          type: object
+                          x-kubernetes-preserve-unknown-fields: true
+                          properties:
+                            name:
+                              type: string
+                              x-k8s-lsp-ref-role: reference
+                              x-k8s-lsp-ref-kind: ConfigMap
+                        secretKeyRef:
+                          type: object
+                          x-kubernetes-preserve-unknown-fields: true
+                          properties:
+                            name:
+                              type: string
+                              x-k8s-lsp-ref-role: reference
+                              x-k8s-lsp-ref-kind: Secret
+              envFrom:
+                type: array
+                items:
+                  type: object
+                  x-kubernetes-preserve-unknown-fields: true
+                  properties:
+                    configMapRef:
+                      type: object
+                      x-kubernetes-preserve-unknown-fields: true
+                      properties:
+                        name:
+                          type: string
+                          x-k8s-lsp-ref-role: reference
+                          x-k8s-lsp-ref-kind: ConfigMap
+                    secretRef:
+                      type: object
+                      x-kubernetes-preserve-unknown-fields: true
+                      properties:
+                        name:
+                          type: string
+                          x-k8s-lsp-ref-role: reference
+                          x-k8s-lsp-ref-kind: Secret
+---
+group: "batch"
+version: "v1"
+kind: "CronJob"
+openAPIV3Schema:
+  type: object
+  properties:
+    apiVersion: { type: string }
+    kind: { type: string }
+    metadata:
+      type: object
+      x-kubernetes-preserve-unknown-fields: true
+      properties:
+        name:
+          type: string
+          x-k8s-lsp-ref-role: definition
+        namespace:
+          type: string
+          x-k8s-lsp-ref-role: reference
+          x-k8s-lsp-ref-kind: Namespace
+          x-k8s-lsp-ref-scope: cluster
+    spec:
+      type: object
+      x-kubernetes-preserve-unknown-fields: true
+      properties:
+        jobTemplate:
+          type: object
+          x-kubernetes-preserve-unknown-fields: true
+          properties:
+            spec:
+              type: object
+              x-kubernetes-preserve-unknown-fields: true
+              properties:
+                template:
+                  type: object
+                  x-kubernetes-preserve-unknown-fields: true
+                  properties:
+                    metadata:
+                      type: object
+                      x-kubernetes-preserve-unknown-fields: true
+                      properties:
+                        name:
+                          type: string
+                          x-k8s-lsp-ref-role: definition
+                    spec:
+                      type: object
+                      x-kubernetes-preserve-unknown-fields: true
+                      properties:
+                        serviceAccountName:
+                          type: string
+                          x-k8s-lsp-ref-role: reference
+                          x-k8s-lsp-ref-kind: ServiceAccount
+                        imagePullSecrets:
+                          type: array
+                          items:
+                            type: object
+                            x-kubernetes-preserve-unknown-fields: true
+                            properties:
+                              name:
+                                type: string
+                                x-k8s-lsp-ref-role: reference
+                                x-k8s-lsp-ref-kind: Secret
+                        volumes:
+                          type: array
+                          items:
+                            type: object
+                            x-kubernetes-preserve-unknown-fields: true
+                            properties:
+                              configMap:
+                                type: object
+                                x-kubernetes-preserve-unknown-fields: true
+                                properties:
+                                  name:
+                                    type: string
+                                    x-k8s-lsp-ref-role: reference
+                                    x-k8s-lsp-ref-kind: ConfigMap
+                              secret:
+                                type: object
+                                x-kubernetes-preserve-unknown-fields: true
+                                properties:
+                                  secretName:
+                                    type: string
+                                    x-k8s-lsp-ref-role: reference
+                                    x-k8s-lsp-ref-kind: Secret
+                              persistentVolumeClaim:
+                                type: object
+                                x-kubernetes-preserve-unknown-fields: true
+                                properties:
+                                  claimName:
+                                    type: string
+                                    x-k8s-lsp-ref-role: reference
+                                    x-k8s-lsp-ref-kind: PersistentVolumeClaim
+                        containers:
+                          type: array
+                          items:
+                            type: object
+                            x-kubernetes-preserve-unknown-fields: true
+                            properties:
+                              env:
+                                type: array
+                                items:
+                                  type: object
+                                  x-kubernetes-preserve-unknown-fields: true
+                                  properties:
+                                    valueFrom:
+                                      type: object
+                                      x-kubernetes-preserve-unknown-fields: true
+                                      properties:
+                                        configMapKeyRef:
+                                          type: object
+                                          x-kubernetes-preserve-unknown-fields: true
+                                          properties:
+                                            name:
+                                              type: string
+                                              x-k8s-lsp-ref-role: reference
+                                              x-k8s-lsp-ref-kind: ConfigMap
+                                        secretKeyRef:
+                                          type: object
+                                          x-kubernetes-preserve-unknown-fields: true
+                                          properties:
+                                            name:
+                                              type: string
+                                              x-k8s-lsp-ref-role: reference
+                                              x-k8s-lsp-ref-kind: Secret
+                              envFrom:
+                                type: array
+                                items:
+                                  type: object
+                                  x-kubernetes-preserve-unknown-fields: true
+                                  properties:
+                                    configMapRef:
+                                      type: object
+                                      x-kubernetes-preserve-unknown-fields: true
+                                      properties:
+                                        name:
+                                          type: string
+                                          x-k8s-lsp-ref-role: reference
+                                          x-k8s-lsp-ref-kind: ConfigMap
+                                    secretRef:
+                                      type: object
+                                      x-kubernetes-preserve-unknown-fields: true
+                                      properties:
+                                        name:
+                                          type: string
+                                          x-k8s-lsp-ref-role: reference
+                                          x-k8s-lsp-ref-kind: Secret
+---
+group: "apps"
+version: "v1"
+kind: "StatefulSet"
+openAPIV3Schema:
+  type: object
+  properties:
+    apiVersion: { type: string }
+    kind: { type: string }
+    metadata:
+      type: object
+      x-kubernetes-preserve-unknown-fields: true
+      properties:
+        name:
+          type: string
+          x-k8s-lsp-ref-role: definition
+        namespace:
+          type: string
+          x-k8s-lsp-ref-role: reference
+          x-k8s-lsp-ref-kind: Namespace
+          x-k8s-lsp-ref-scope: cluster
+    spec:
+      type: object
+      x-kubernetes-preserve-unknown-fields: true
+      properties:
+        serviceName:
+          type: string
+          x-k8s-lsp-ref-role: reference
+          x-k8s-lsp-ref-kind: Service
+        template:
+          type: object
+          x-kubernetes-preserve-unknown-fields: true
+          properties:
+            metadata:
+              type: object
+              x-kubernetes-preserve-unknown-fields: true
+              properties:
+                name:
+                  type: string
+                  x-k8s-lsp-ref-role: definition
+            spec:
+              type: object
+              x-kubernetes-preserve-unknown-fields: true
+              properties:
+                serviceAccountName:
+                  type: string
+                  x-k8s-lsp-ref-role: reference
+                  x-k8s-lsp-ref-kind: ServiceAccount
+                imagePullSecrets:
+                  type: array
+                  items:
+                    type: object
+                    x-kubernetes-preserve-unknown-fields: true
+                    properties:
+                      name:
+                        type: string
+                        x-k8s-lsp-ref-role: reference
+                        x-k8s-lsp-ref-kind: Secret
+                volumes:
+                  type: array
+                  items:
+                    type: object
+                    x-kubernetes-preserve-unknown-fields: true
+                    properties:
+                      configMap:
+                        type: object
+                        x-kubernetes-preserve-unknown-fields: true
+                        properties:
+                          name:
+                            type: string
+                            x-k8s-lsp-ref-role: reference
+                            x-k8s-lsp-ref-kind: ConfigMap
+                      secret:
+                        type: object
+                        x-kubernetes-preserve-unknown-fields: true
+                        properties:
+                          secretName:
+                            type: string
+                            x-k8s-lsp-ref-role: reference
+                            x-k8s-lsp-ref-kind: Secret
+                      persistentVolumeClaim:
+                        type: object
+                        x-kubernetes-preserve-unknown-fields: true
+                        properties:
+                          claimName:
+                            type: string
+                            x-k8s-lsp-ref-role: reference
+                            x-k8s-lsp-ref-kind: PersistentVolumeClaim
+                containers:
+                  type: array
+                  items:
+                    type: object
+                    x-kubernetes-preserve-unknown-fields: true
+                    properties:
+                      env:
+                        type: array
+                        items:
+                          type: object
+                          x-kubernetes-preserve-unknown-fields: true
+                          properties:
+                            valueFrom:
+                              type: object
+                              x-kubernetes-preserve-unknown-fields: true
+                              properties:
+                                configMapKeyRef:
+                                  type: object
+                                  x-kubernetes-preserve-unknown-fields: true
+                                  properties:
+                                    name:
+                                      type: string
+                                      x-k8s-lsp-ref-role: reference
+                                      x-k8s-lsp-ref-kind: ConfigMap
+                                secretKeyRef:
+                                  type: object
+                                  x-kubernetes-preserve-unknown-fields: true
+                                  properties:
+                                    name:
+                                      type: string
+                                      x-k8s-lsp-ref-role: reference
+                                      x-k8s-lsp-ref-kind: Secret
+                      envFrom:
+                        type: array
+                        items:
+                          type: object
+                          x-kubernetes-preserve-unknown-fields: true
+                          properties:
+                            configMapRef:
+                              type: object
+                              x-kubernetes-preserve-unknown-fields: true
+                              properties:
+                                name:
+                                  type: string
+                                  x-k8s-lsp-ref-role: reference
+                                  x-k8s-lsp-ref-kind: ConfigMap
+                            secretRef:
+                              type: object
+                              x-kubernetes-preserve-unknown-fields: true
+                              properties:
+                                name:
+                                  type: string
+                                  x-k8s-lsp-ref-role: reference
+                                  x-k8s-lsp-ref-kind: Secret

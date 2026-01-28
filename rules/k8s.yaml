@@ -97,57 +97,176 @@ references:
     symbol: k8s.resource.name
     targetKind: Secret
     match:
-      kinds: ["Deployment", "StatefulSet", "DaemonSet", "Job"]
+      kinds: ["Deployment", "StatefulSet", "DaemonSet", "Job", "Pod", "CronJob"]
       path: "spec.template.spec.containers[].env[].valueFrom.secretKeyRef.name"
+
+  - name: pod.env.secret
+    symbol: k8s.resource.name
+    targetKind: Secret
+    match:
+      kinds: ["Pod"]
+      path: "spec.containers[].env[].valueFrom.secretKeyRef.name"
+
+  - name: cronjob.env.secret
+    symbol: k8s.resource.name
+    targetKind: Secret
+    match:
+      kinds: ["CronJob"]
+      path: "spec.jobTemplate.spec.template.spec.containers[].env[].valueFrom.secretKeyRef.name"
 
   - name: workload.envfrom.secret
     symbol: k8s.resource.name
     targetKind: Secret
     match:
-      kinds: ["Deployment", "StatefulSet", "DaemonSet", "Job"]
+      kinds: ["Deployment", "StatefulSet", "DaemonSet", "Job", "Pod", "CronJob"]
       path: "spec.template.spec.containers[].envFrom[].secretRef.name"
+
+  - name: pod.envfrom.secret
+    symbol: k8s.resource.name
+    targetKind: Secret
+    match:
+      kinds: ["Pod"]
+      path: "spec.containers[].envFrom[].secretRef.name"
+
+  - name: cronjob.envfrom.secret
+    symbol: k8s.resource.name
+    targetKind: Secret
+    match:
+      kinds: ["CronJob"]
+      path: "spec.jobTemplate.spec.template.spec.containers[].envFrom[].secretRef.name"
 
   - name: workload.volume.secret
     symbol: k8s.resource.name
     targetKind: Secret
     match:
-      kinds: ["Deployment", "StatefulSet", "DaemonSet", "Job"]
+      kinds: ["Deployment", "StatefulSet", "DaemonSet", "Job", "Pod", "CronJob"]
       path: "spec.template.spec.volumes[].secret.secretName"
+
+  - name: pod.volume.secret
+    symbol: k8s.resource.name
+    targetKind: Secret
+    match:
+      kinds: ["Pod"]
+      path: "spec.volumes[].secret.secretName"
+
+  - name: cronjob.volume.secret
+    symbol: k8s.resource.name
+    targetKind: Secret
+    match:
+      kinds: ["CronJob"]
+      path: "spec.jobTemplate.spec.template.spec.volumes[].secret.secretName"
 
   - name: workload.imagePullSecrets
     symbol: k8s.resource.name
     targetKind: Secret
     match:
-      kinds: ["Deployment", "StatefulSet", "DaemonSet", "Job"]
+      kinds: ["Deployment", "StatefulSet", "DaemonSet", "Job", "Pod", "CronJob"]
       path: "spec.template.spec.imagePullSecrets[].name"
+
+  - name: pod.imagePullSecrets
+    symbol: k8s.resource.name
+    targetKind: Secret
+    match:
+      kinds: ["Pod"]
+      path: "spec.imagePullSecrets[].name"
+
+  - name: cronjob.imagePullSecrets
+    symbol: k8s.resource.name
+    targetKind: Secret
+    match:
+      kinds: ["CronJob"]
+      path: "spec.jobTemplate.spec.template.spec.imagePullSecrets[].name"
 
   - name: workload.env.configmap
     symbol: k8s.resource.name
     targetKind: ConfigMap
     match:
-      kinds: ["Deployment", "StatefulSet", "DaemonSet", "Job"]
+      kinds: ["Deployment", "StatefulSet", "DaemonSet", "Job", "Pod", "CronJob"]
       path: "spec.template.spec.containers[].env[].valueFrom.configMapKeyRef.name"
+
+  - name: pod.env.configmap
+    symbol: k8s.resource.name
+    targetKind: ConfigMap
+    match:
+      kinds: ["Pod"]
+      path: "spec.containers[].env[].valueFrom.configMapKeyRef.name"
+
+  - name: cronjob.env.configmap
+    symbol: k8s.resource.name
+    targetKind: ConfigMap
+    match:
+      kinds: ["CronJob"]
+      path: "spec.jobTemplate.spec.template.spec.containers[].env[].valueFrom.configMapKeyRef.name"
 
   - name: workload.envfrom.configmap
     symbol: k8s.resource.name
     targetKind: ConfigMap
     match:
-      kinds: ["Deployment", "StatefulSet", "DaemonSet", "Job"]
+      kinds: ["Deployment", "StatefulSet", "DaemonSet", "Job", "Pod", "CronJob"]
       path: "spec.template.spec.containers[].envFrom[].configMapRef.name"
+
+  - name: pod.envfrom.configmap
+    symbol: k8s.resource.name
+    targetKind: ConfigMap
+    match:
+      kinds: ["Pod"]
+      path: "spec.containers[].envFrom[].configMapRef.name"
+
+  - name: cronjob.envfrom.configmap
+    symbol: k8s.resource.name
+    targetKind: ConfigMap
+    match:
+      kinds: ["CronJob"]
+      path: "spec.jobTemplate.spec.template.spec.containers[].envFrom[].configMapRef.name"
 
   - name: workload.serviceaccount
     symbol: k8s.resource.name
     targetKind: ServiceAccount
     match:
-      kinds: ["Deployment", "StatefulSet", "DaemonSet", "Job"]
+      kinds: ["Deployment", "StatefulSet", "DaemonSet", "Job", "Pod", "CronJob"]
       path: "spec.template.spec.serviceAccountName"
+
+  - name: pod.serviceaccount
+    symbol: k8s.resource.name
+    targetKind: ServiceAccount
+    match:
+      kinds: ["Pod"]
+      path: "spec.serviceAccountName"
+
+  - name: cronjob.serviceaccount
+    symbol: k8s.resource.name
+    targetKind: ServiceAccount
+    match:
+      kinds: ["CronJob"]
+      path: "spec.jobTemplate.spec.template.spec.serviceAccountName"
 
   - name: workload.volume.pvc
     symbol: k8s.resource.name
     targetKind: PersistentVolumeClaim
     match:
-      kinds: ["Deployment", "StatefulSet", "DaemonSet", "Job"]
+      kinds: ["Deployment", "StatefulSet", "DaemonSet", "Job", "Pod", "CronJob"]
       path: "spec.template.spec.volumes[].persistentVolumeClaim.claimName"
+
+  - name: pod.volume.pvc
+    symbol: k8s.resource.name
+    targetKind: PersistentVolumeClaim
+    match:
+      kinds: ["Pod"]
+      path: "spec.volumes[].persistentVolumeClaim.claimName"
+
+  - name: cronjob.volume.pvc
+    symbol: k8s.resource.name
+    targetKind: PersistentVolumeClaim
+    match:
+      kinds: ["CronJob"]
+      path: "spec.jobTemplate.spec.template.spec.volumes[].persistentVolumeClaim.claimName"
+
+  - name: statefulset.serviceName
+    symbol: k8s.resource.name
+    targetKind: Service
+    match:
+      kinds: ["StatefulSet"]
+      path: "spec.serviceName"
 
   - name: pvc.volumeName.pv
     symbol: k8s.resource.name

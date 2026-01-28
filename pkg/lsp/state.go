@@ -51,6 +51,8 @@ type ServerState struct {
 
 	SemanticTokensEnabled          bool
 	ReferencesVisualizationEnabled bool
+	CodeLensEnabled                bool
+	DocumentLinksEnabled           bool
 
 	diagMu     sync.Mutex
 	diagTimers map[string]*time.Timer

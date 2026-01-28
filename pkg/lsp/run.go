@@ -57,10 +57,12 @@ func Run() {
 		ScanDone:      make(chan struct{}),
 		semanticCache: make(map[string]semanticTokensSnapshot),
 		// Defaults; may be overridden by client initializationOptions.
-		DiagnosticsDebounce: 200 * time.Millisecond,
-		IndexDebounce:       250 * time.Millisecond,
+		DiagnosticsDebounce:            200 * time.Millisecond,
+		IndexDebounce:                  250 * time.Millisecond,
 		SemanticTokensEnabled:          true,
 		ReferencesVisualizationEnabled: true,
+		CodeLensEnabled:                true,
+		DocumentLinksEnabled:           true,
 	}
 
 	handler := protocol.Handler{
@@ -77,6 +79,8 @@ func Run() {
 		TextDocumentHover:               textDocumentHover,
 		TextDocumentDocumentHighlight:   textDocumentDocumentHighlight,
 		TextDocumentSemanticTokensFull:  textDocumentSemanticTokensFull,
+		TextDocumentCodeLens:            textDocumentCodeLens,
+		TextDocumentDocumentLink:        textDocumentDocumentLink,
 		TextDocumentCodeAction:          textDocumentCodeAction,
 		TextDocumentRename:              textDocumentRename,
 		TextDocumentDidSave:             textDocumentDidSave,

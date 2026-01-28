@@ -4,3 +4,4 @@ client/out
 client/bin
 *.vsix
 plans
+plan.md

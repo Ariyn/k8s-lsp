@@ -46,6 +46,14 @@
       {
         "command": "k8sLsp.showSubPathTargets",
         "title": "Kubernetes LSP: Show subPath Targets"
+      },
+      {
+        "command": "k8sLsp.peekDefinition",
+        "title": "Kubernetes LSP: Peek Definition"
+      },
+      {
+        "command": "k8sLsp.goToDefinition",
+        "title": "Kubernetes LSP: Go to Definition"
       }
     ],
     "languages": [
@@ -109,6 +117,18 @@
           "type": "boolean",
           "default": true,
           "description": "Enable in-document reference/definition visualization (e.g. document highlights)."
+        },
+        "k8sLsp.codeLens.enabled": {
+          "scope": "resource",
+          "type": "boolean",
+          "default": true,
+          "description": "Show clickable CodeLens actions (peek/go-to) for schema-tagged reference fields."
+        },
+        "k8sLsp.documentLinks.enabled": {
+          "scope": "resource",
+          "type": "boolean",
+          "default": true,
+          "description": "Make schema-tagged reference values clickable links (go to definition)."
         },
         "k8sLsp.serverPath": {
           "scope": "machine",
