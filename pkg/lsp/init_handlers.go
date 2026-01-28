@@ -20,6 +20,7 @@ func initialize(context *glsp.Context, params *protocol.InitializeParams) (any, 
 		TextDocumentSync:          protocol.TextDocumentSyncKindFull,
 		DefinitionProvider:        true,
 		ReferencesProvider:        true,
+		DocumentFormattingProvider: true,
 		DocumentHighlightProvider: true,
 		DocumentLinkProvider: &protocol.DocumentLinkOptions{
 			ResolveProvider: &docLinkResolve,
@@ -97,6 +98,29 @@ func initialize(context *glsp.Context, params *protocol.InitializeParams) (any, 
 					if v, ok := dl["enabled"]; ok {
 						if b, ok := v.(bool); ok {
 							state.DocumentLinksEnabled = b
+						}
+					}
+				}
+				if fmtCfg, ok := m["formatting"].(map[string]any); ok {
+					if v, ok := fmtCfg["enabled"]; ok {
+						if b, ok := v.(bool); ok {
+							state.FormattingEnabled = b
+						}
+					}
+					if v, ok := fmtCfg["indentSize"]; ok {
+						if n, ok := toInt(v); ok {
+							if n < 1 {
+								n = 1
+							}
+							if n > 8 {
+								n = 8
+							}
+							state.FormattingIndentSize = n
+						}
+					}
+					if v, ok := fmtCfg["disableForTemplates"]; ok {
+						if b, ok := v.(bool); ok {
+							state.FormattingDisableForTemplates = b
 						}
 					}
 				}

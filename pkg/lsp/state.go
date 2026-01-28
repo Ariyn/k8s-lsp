@@ -53,6 +53,9 @@ type ServerState struct {
 	ReferencesVisualizationEnabled bool
 	CodeLensEnabled                bool
 	DocumentLinksEnabled           bool
+	FormattingEnabled              bool
+	FormattingIndentSize           int
+	FormattingDisableForTemplates  bool
 
 	diagMu     sync.Mutex
 	diagTimers map[string]*time.Timer

@@ -119,6 +119,11 @@ export function activate(context: ExtensionContext) {
       },
       documentLinks: {
         enabled: workspace.getConfiguration('k8sLsp').get<boolean>('documentLinks.enabled')
+      },
+      formatting: {
+        enabled: workspace.getConfiguration('k8sLsp').get<boolean>('formatting.enabled'),
+        indentSize: workspace.getConfiguration('k8sLsp').get<number>('formatting.indentSize'),
+        disableForTemplates: workspace.getConfiguration('k8sLsp').get<boolean>('formatting.disableForTemplates')
       }
     },
     synchronize: {
@@ -188,6 +193,11 @@ export function activate(context: ExtensionContext) {
           },
           documentLinks: {
             enabled: workspace.getConfiguration('k8sLsp').get<boolean>('documentLinks.enabled')
+          },
+          formatting: {
+            enabled: workspace.getConfiguration('k8sLsp').get<boolean>('formatting.enabled'),
+            indentSize: workspace.getConfiguration('k8sLsp').get<number>('formatting.indentSize'),
+            disableForTemplates: workspace.getConfiguration('k8sLsp').get<boolean>('formatting.disableForTemplates')
           }
         });
 

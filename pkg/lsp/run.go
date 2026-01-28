@@ -63,6 +63,9 @@ func Run() {
 		ReferencesVisualizationEnabled: true,
 		CodeLensEnabled:                true,
 		DocumentLinksEnabled:           true,
+		FormattingEnabled:              true,
+		FormattingIndentSize:           2,
+		FormattingDisableForTemplates:  true,
 	}
 
 	handler := protocol.Handler{
@@ -81,6 +84,7 @@ func Run() {
 		TextDocumentSemanticTokensFull:  textDocumentSemanticTokensFull,
 		TextDocumentCodeLens:            textDocumentCodeLens,
 		TextDocumentDocumentLink:        textDocumentDocumentLink,
+		TextDocumentFormatting:          textDocumentFormatting,
 		TextDocumentCodeAction:          textDocumentCodeAction,
 		TextDocumentRename:              textDocumentRename,
 		TextDocumentDidSave:             textDocumentDidSave,

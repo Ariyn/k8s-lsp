@@ -62,6 +62,29 @@ func workspaceDidChangeConfiguration(context *glsp.Context, params *protocol.Did
 			}
 		}
 	}
+	if fmtCfg, ok := m["formatting"].(map[string]any); ok {
+		if v, ok := fmtCfg["enabled"]; ok {
+			if b, ok := v.(bool); ok {
+				state.FormattingEnabled = b
+			}
+		}
+		if v, ok := fmtCfg["indentSize"]; ok {
+			if n, ok := toInt(v); ok {
+				if n < 1 {
+					n = 1
+				}
+				if n > 8 {
+					n = 8
+				}
+				state.FormattingIndentSize = n
+			}
+		}
+		if v, ok := fmtCfg["disableForTemplates"]; ok {
+			if b, ok := v.(bool); ok {
+				state.FormattingDisableForTemplates = b
+			}
+		}
+	}
 
 	sourcesChanged := !stringSliceEqual(state.CRDSources, newCRDSources) || !stringSliceEqual(state.SchemaSources, newSchemaSources)
 	state.CRDSources = newCRDSources

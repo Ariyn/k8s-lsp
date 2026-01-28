@@ -72,6 +72,12 @@ VS Code에서 Kubernetes YAML을 더 빠르게 작성/탐색/리팩터링할 수
   - 편집 중 진단 발행 debounce(ms). `0`이면 비활성
 - `k8sLsp.indexDebounceMs` (기본: `250`)
   - 편집 중 인덱싱 debounce(ms). `0`이면 비활성
+- `k8sLsp.formatting.enabled` (기본: `true`)
+  - 서버 기반 YAML 포매팅(Format Document) 활성화
+- `k8sLsp.formatting.indentSize` (기본: `2`)
+  - 포매팅 들여쓰기 크기
+- `k8sLsp.formatting.disableForTemplates` (기본: `true`)
+  - Helm 등 템플릿 신호가 있는 문서에서 포매팅을 no-op 처리
 
 예시(`settings.json`):
 ```json

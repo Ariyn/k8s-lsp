@@ -130,6 +130,26 @@
           "default": true,
           "description": "Make schema-tagged reference values clickable links (go to definition)."
         },
+        "k8sLsp.formatting.enabled": {
+          "scope": "resource",
+          "type": "boolean",
+          "default": true,
+          "description": "Enable YAML formatting via the Kubernetes LSP server (Format Document)."
+        },
+        "k8sLsp.formatting.indentSize": {
+          "scope": "resource",
+          "type": "number",
+          "default": 2,
+          "minimum": 1,
+          "maximum": 8,
+          "description": "Indent size used by the server-side YAML formatter."
+        },
+        "k8sLsp.formatting.disableForTemplates": {
+          "scope": "resource",
+          "type": "boolean",
+          "default": true,
+          "description": "Disable formatting for template-like YAML (Helm, etc.) to avoid destructive edits."
+        },
         "k8sLsp.serverPath": {
           "scope": "machine",
           "type": "string",
