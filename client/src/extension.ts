@@ -107,7 +107,13 @@ export function activate(context: ExtensionContext) {
       crdSources: workspace.getConfiguration('k8sLsp').get<string[]>('crdSources') ?? [],
       schemaSources: workspace.getConfiguration('k8sLsp').get<string[]>('schemaSources') ?? [],
       diagnosticsDebounceMs: workspace.getConfiguration('k8sLsp').get<number>('diagnosticsDebounceMs'),
-      indexDebounceMs: workspace.getConfiguration('k8sLsp').get<number>('indexDebounceMs')
+      indexDebounceMs: workspace.getConfiguration('k8sLsp').get<number>('indexDebounceMs'),
+      semanticTokens: {
+        enabled: workspace.getConfiguration('k8sLsp').get<boolean>('semanticTokens.enabled')
+      },
+      referencesVisualization: {
+        enabled: workspace.getConfiguration('k8sLsp').get<boolean>('referencesVisualization.enabled')
+      }
     },
     synchronize: {
       // Notify the server about file changes to '.clientrc files contained in the workspace
@@ -164,7 +170,13 @@ export function activate(context: ExtensionContext) {
           crdSources: workspace.getConfiguration('k8sLsp').get<string[]>('crdSources') ?? [],
           schemaSources: workspace.getConfiguration('k8sLsp').get<string[]>('schemaSources') ?? [],
           diagnosticsDebounceMs: workspace.getConfiguration('k8sLsp').get<number>('diagnosticsDebounceMs'),
-          indexDebounceMs: workspace.getConfiguration('k8sLsp').get<number>('indexDebounceMs')
+          indexDebounceMs: workspace.getConfiguration('k8sLsp').get<number>('indexDebounceMs'),
+          semanticTokens: {
+            enabled: workspace.getConfiguration('k8sLsp').get<boolean>('semanticTokens.enabled')
+          },
+          referencesVisualization: {
+            enabled: workspace.getConfiguration('k8sLsp').get<boolean>('referencesVisualization.enabled')
+          }
         });
 
         const sendServerSettings = () => {

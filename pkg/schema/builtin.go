@@ -12,7 +12,7 @@ func RegisterBuiltins(reg *Registry) {
 
 	// Common ObjectMeta subset.
 	objectMeta := Obj(map[string]*Node{
-		"name":        {Type: TypeString, Description: "Name must be unique within a namespace."},
+		"name":        {Type: TypeString, Description: "Name must be unique within a namespace.", Ref: &RefMeta{Role: RefRoleDefinition}},
 		"namespace":   {Type: TypeString, Description: "Namespace defines the space within which each name must be unique."},
 		"labels":      {Type: TypeObject, AdditionalProperties: &Node{Type: TypeString}, Description: "Map of string keys and values."},
 		"annotations": {Type: TypeObject, AdditionalProperties: &Node{Type: TypeString}, Description: "Map of string keys and values."},
@@ -62,7 +62,7 @@ func RegisterBuiltins(reg *Registry) {
 // but we don't have a specific GVK schema.
 func KubernetesObjectFallback() *Node {
 	objectMeta := Obj(map[string]*Node{
-		"name":        {Type: TypeString, Description: "Name must be unique within a namespace."},
+		"name":        {Type: TypeString, Description: "Name must be unique within a namespace.", Ref: &RefMeta{Role: RefRoleDefinition}},
 		"namespace":   {Type: TypeString, Description: "Namespace defines the space within which each name must be unique."},
 		"labels":      {Type: TypeObject, AdditionalProperties: &Node{Type: TypeString}},
 		"annotations": {Type: TypeObject, AdditionalProperties: &Node{Type: TypeString}},

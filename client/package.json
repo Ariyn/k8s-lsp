@@ -98,6 +98,18 @@
           },
           "description": "List of YAML schema packs (https:// URLs, file paths, or file:// URIs) that provide OpenAPIV3 schemas for core/built-in resources by GVK."
         },
+        "k8sLsp.semanticTokens.enabled": {
+          "scope": "resource",
+          "type": "boolean",
+          "default": true,
+          "description": "Enable semantic highlighting (semantic tokens) for Kubernetes YAML."
+        },
+        "k8sLsp.referencesVisualization.enabled": {
+          "scope": "resource",
+          "type": "boolean",
+          "default": true,
+          "description": "Enable in-document reference/definition visualization (e.g. document highlights)."
+        },
         "k8sLsp.serverPath": {
           "scope": "machine",
           "type": "string",

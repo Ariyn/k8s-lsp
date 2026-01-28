@@ -33,6 +33,22 @@ func workspaceDidChangeConfiguration(context *glsp.Context, params *protocol.Did
 	newCRDSources := toStringSlice(m["crdSources"])
 	newSchemaSources := toStringSlice(m["schemaSources"])
 
+	// Feature toggles (default ON)
+	if sem, ok := m["semanticTokens"].(map[string]any); ok {
+		if v, ok := sem["enabled"]; ok {
+			if b, ok := v.(bool); ok {
+				state.SemanticTokensEnabled = b
+			}
+		}
+	}
+	if rv, ok := m["referencesVisualization"].(map[string]any); ok {
+		if v, ok := rv["enabled"]; ok {
+			if b, ok := v.(bool); ok {
+				state.ReferencesVisualizationEnabled = b
+			}
+		}
+	}
+
 	sourcesChanged := !stringSliceEqual(state.CRDSources, newCRDSources) || !stringSliceEqual(state.SchemaSources, newSchemaSources)
 	state.CRDSources = newCRDSources
 	state.SchemaSources = newSchemaSources
@@ -136,6 +152,16 @@ func reloadSchemasAndCRDs(context *glsp.Context) {
 	state.Schemas = reg
 	if state.Resolver != nil {
 		state.Resolver.Schemas = reg
+	}
+
+	state.schemaGen++
+	state.semanticMu.Lock()
+	for k := range state.semanticCache {
+		delete(state.semanticCache, k)
+	}
+	state.semanticMu.Unlock()
+	if ctx := state.getNotifyContext(); ctx != nil {
+		ctx.Notify(protocol.MethodWorkspaceSemanticTokensRefresh, struct{}{})
 	}
 
 	// Avoid unused warning if context is not used; keep it for future extensions.

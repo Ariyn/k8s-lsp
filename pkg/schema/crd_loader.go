@@ -139,6 +139,11 @@ func convertOpenAPIV3Schema(n *yaml.Node) *Node {
 
 	s := &Node{Type: TypeAny}
 
+	// k8s-lsp extensions (schema-driven reference/definition visualization)
+	if rm := parseRefMeta(n); rm != nil {
+		s.Ref = rm
+	}
+
 	// nullable
 	if strings.ToLower(getMapScalar(n, "nullable")) == "true" {
 		s.Nullable = true
@@ -226,6 +231,20 @@ func convertOpenAPIV3Schema(n *yaml.Node) *Node {
 	}
 
 	return s
+}
+
+func parseRefMeta(n *yaml.Node) *RefMeta {
+	if n == nil || n.Kind != yaml.MappingNode {
+		return nil
+	}
+	role := strings.ToLower(strings.TrimSpace(getMapScalar(n, "x-k8s-lsp-ref-role")))
+	if role == "" {
+		return nil
+	}
+	r := &RefMeta{Role: RefRole(role)}
+	r.Kind = strings.TrimSpace(getMapScalar(n, "x-k8s-lsp-ref-kind"))
+	r.Scope = strings.ToLower(strings.TrimSpace(getMapScalar(n, "x-k8s-lsp-ref-scope")))
+	return r
 }
 
 func convertComposedSchema(n *yaml.Node) *Node {
@@ -318,6 +337,26 @@ func mergeNodes(nodes []*Node) *Node {
 		for ev := range enumSet {
 			out.Enum = append(out.Enum, ev)
 		}
+	}
+
+	// RefMeta: keep only if all non-nil refs agree on role.
+	var ref *RefMeta
+	conflict := false
+	for _, n := range nodes {
+		if n == nil || n.Ref == nil {
+			continue
+		}
+		if ref == nil {
+			ref = n.Ref
+			continue
+		}
+		if ref.Role != n.Ref.Role {
+			conflict = true
+			break
+		}
+	}
+	if !conflict {
+		out.Ref = ref
 	}
 
 	// Properties: union; merge conflicts recursively.

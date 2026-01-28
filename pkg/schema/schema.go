@@ -13,6 +13,7 @@ type Node struct {
 	Description string
 	Default     string
 	Nullable    bool
+	Ref         *RefMeta
 
 	PreserveUnknownFields bool
 	AdditionalProperties  *Node

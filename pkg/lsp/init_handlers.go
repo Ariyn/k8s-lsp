@@ -15,13 +15,21 @@ func initialize(context *glsp.Context, params *protocol.InitializeParams) (any, 
 		state.setNotifyContext(context)
 	}
 	capabilities := protocol.ServerCapabilities{
-		TextDocumentSync:        protocol.TextDocumentSyncKindFull,
-		DefinitionProvider:      true,
-		ReferencesProvider:      true,
-		DocumentSymbolProvider:  true,
-		WorkspaceSymbolProvider: true,
+		TextDocumentSync:          protocol.TextDocumentSyncKindFull,
+		DefinitionProvider:        true,
+		ReferencesProvider:        true,
+		DocumentHighlightProvider: true,
+		DocumentSymbolProvider:    true,
+		WorkspaceSymbolProvider:   true,
 		CompletionProvider: &protocol.CompletionOptions{
 			TriggerCharacters: []string{":", " "},
+		},
+		SemanticTokensProvider: &protocol.SemanticTokensOptions{
+			Legend: protocol.SemanticTokensLegend{
+				TokenTypes:     semanticTokenTypes,
+				TokenModifiers: semanticTokenModifiers,
+			},
+			Full: true,
 		},
 		CodeActionProvider: &protocol.CodeActionOptions{
 			CodeActionKinds: []protocol.CodeActionKind{protocol.CodeActionKindQuickFix, protocol.CodeActionKindSource},
@@ -55,6 +63,20 @@ func initialize(context *glsp.Context, params *protocol.InitializeParams) (any, 
 				}
 				if v, ok := m["schemaSources"]; ok {
 					state.SchemaSources = toStringSlice(v)
+				}
+				if sem, ok := m["semanticTokens"].(map[string]any); ok {
+					if v, ok := sem["enabled"]; ok {
+						if b, ok := v.(bool); ok {
+							state.SemanticTokensEnabled = b
+						}
+					}
+				}
+				if rv, ok := m["referencesVisualization"].(map[string]any); ok {
+					if v, ok := rv["enabled"]; ok {
+						if b, ok := v.(bool); ok {
+							state.ReferencesVisualizationEnabled = b
+						}
+					}
 				}
 				if v, ok := m["diagnosticsDebounceMs"]; ok {
 					if ms, ok := toInt(v); ok {

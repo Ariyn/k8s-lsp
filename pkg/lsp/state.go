@@ -12,6 +12,7 @@ import (
 
 	"github.com/rs/zerolog/log"
 	"github.com/tliron/glsp"
+	protocol "github.com/tliron/glsp/protocol_3_16"
 )
 
 type ServerState struct {
@@ -32,8 +33,13 @@ type ServerState struct {
 	CRDSources    []string
 	SchemaSources []string
 
-	reloadMu            sync.Mutex
-	loadedCRDPaths      []string
+	schemaGen uint64
+
+	semanticMu    sync.Mutex
+	semanticCache map[string]semanticTokensSnapshot
+
+	reloadMu              sync.Mutex
+	loadedCRDPaths        []string
 	loadedSchemaPackPaths []string
 
 	scanMu      sync.Mutex
@@ -42,6 +48,9 @@ type ServerState struct {
 
 	DiagnosticsDebounce time.Duration
 	IndexDebounce       time.Duration
+
+	SemanticTokensEnabled          bool
+	ReferencesVisualizationEnabled bool
 
 	diagMu     sync.Mutex
 	diagTimers map[string]*time.Timer
@@ -52,6 +61,12 @@ type ServerState struct {
 	indexTimers map[string]*time.Timer
 	indexLatest map[string]indexRequest
 	indexSeq    map[string]uint64
+}
+
+type semanticTokensSnapshot struct {
+	ver       int32
+	schemaGen uint64
+	data      []protocol.UInteger
 }
 
 type diagRequest struct {
