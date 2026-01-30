@@ -47,11 +47,11 @@ func TestFormatting_MultiDoc_PreservesSeparator(t *testing.T) {
 func TestFormatting_Template_NoOp(t *testing.T) {
 	in := "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: {{ .Values.name }}\n"
 	state = &ServerState{
-		Documents:                    map[string]string{},
-		DocVersion:                   map[string]int32{},
-		YAMLCache:                    yamlstream.NewCache(),
-		FormattingEnabled:            true,
-		FormattingIndentSize:         2,
+		Documents:                     map[string]string{},
+		DocVersion:                    map[string]int32{},
+		YAMLCache:                     yamlstream.NewCache(),
+		FormattingEnabled:             true,
+		FormattingIndentSize:          2,
 		FormattingDisableForTemplates: true,
 	}
 	uri := "file:///tmp/tpl.yaml"
@@ -73,11 +73,11 @@ func TestFormatting_Template_NoOp(t *testing.T) {
 func TestFormatting_Handler_ReturnsWholeDocumentEdit(t *testing.T) {
 	in := "apiVersion: v1\nkind: ConfigMap\nmetadata:\n name: x\n"
 	state = &ServerState{
-		Documents:                    map[string]string{},
-		DocVersion:                   map[string]int32{},
-		YAMLCache:                    yamlstream.NewCache(),
-		FormattingEnabled:            true,
-		FormattingIndentSize:         2,
+		Documents:                     map[string]string{},
+		DocVersion:                    map[string]int32{},
+		YAMLCache:                     yamlstream.NewCache(),
+		FormattingEnabled:             true,
+		FormattingIndentSize:          2,
 		FormattingDisableForTemplates: true,
 	}
 	uri := "file:///tmp/a.yaml"

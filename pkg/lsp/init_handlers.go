@@ -17,11 +17,11 @@ func initialize(context *glsp.Context, params *protocol.InitializeParams) (any, 
 	resolveProvider := false
 	docLinkResolve := false
 	capabilities := protocol.ServerCapabilities{
-		TextDocumentSync:          protocol.TextDocumentSyncKindFull,
-		DefinitionProvider:        true,
-		ReferencesProvider:        true,
+		TextDocumentSync:           protocol.TextDocumentSyncKindFull,
+		DefinitionProvider:         true,
+		ReferencesProvider:         true,
 		DocumentFormattingProvider: true,
-		DocumentHighlightProvider: true,
+		DocumentHighlightProvider:  true,
 		DocumentLinkProvider: &protocol.DocumentLinkOptions{
 			ResolveProvider: &docLinkResolve,
 		},
