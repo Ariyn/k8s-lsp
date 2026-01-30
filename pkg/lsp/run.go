@@ -87,6 +87,7 @@ func Run() {
 		TextDocumentFormatting:          textDocumentFormatting,
 		TextDocumentCodeAction:          textDocumentCodeAction,
 		TextDocumentRename:              textDocumentRename,
+		TextDocumentPrepareRename:       textDocumentPrepareRename,
 		TextDocumentDidSave:             textDocumentDidSave,
 		WorkspaceDidChangeConfiguration: workspaceDidChangeConfiguration,
 		WorkspaceDidChangeWatchedFiles:  workspaceDidChangeWatchedFiles,

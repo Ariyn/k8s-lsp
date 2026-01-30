@@ -16,6 +16,7 @@ func initialize(context *glsp.Context, params *protocol.InitializeParams) (any, 
 	}
 	resolveProvider := false
 	docLinkResolve := false
+	prepareRename := true
 	capabilities := protocol.ServerCapabilities{
 		TextDocumentSync:           protocol.TextDocumentSyncKindFull,
 		DefinitionProvider:         true,
@@ -43,7 +44,7 @@ func initialize(context *glsp.Context, params *protocol.InitializeParams) (any, 
 		CodeActionProvider: &protocol.CodeActionOptions{
 			CodeActionKinds: []protocol.CodeActionKind{protocol.CodeActionKindQuickFix, protocol.CodeActionKindSource},
 		},
-		RenameProvider: &protocol.RenameOptions{},
+		RenameProvider: &protocol.RenameOptions{PrepareProvider: &prepareRename},
 		ExecuteCommandProvider: &protocol.ExecuteCommandOptions{
 			Commands: []string{"k8s.embeddedContent", "k8s.saveEmbeddedContent"},
 		},

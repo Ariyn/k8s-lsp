@@ -73,6 +73,33 @@ func textDocumentRename(context *glsp.Context, params *protocol.RenameParams) (*
 	return edit, nil
 }
 
+func textDocumentPrepareRename(context *glsp.Context, params *protocol.PrepareRenameParams) (any, error) {
+	uri := params.TextDocument.URI
+	state.setNotifyContext(context)
+	content, _, _ := getOrLoadDocument(uri)
+	if strings.TrimSpace(content) == "" {
+		return nil, nil
+	}
+
+	stream, err := getYAMLStreamForContent(uri, content)
+	if err != nil {
+		log.Error().Err(err).Msg("Failed to parse YAML for prepareRename")
+		return nil, nil
+	}
+
+	line0 := int(params.Position.Line)
+	col0 := int(params.Position.Character)
+	ctx, rng, placeholder, err := renameTargetAt(stream, line0, col0)
+	if err != nil {
+		return nil, err
+	}
+	if ctx == nil {
+		return nil, nil
+	}
+
+	return protocol.RangeWithPlaceholder{Range: rng, Placeholder: placeholder}, nil
+}
+
 type renameContext struct {
 	kind               string
 	oldName            string
@@ -92,7 +119,7 @@ func symbolContextAt(stream *yamlstream.Stream, line0, col0 int) (*renameContext
 		return nil, nil
 	}
 
-	node, parent, path := findNodeAtInDoc(doc.Node, line1, col1)
+	node, path := findRenameScalarAtInDoc(doc.Node, line1, col1)
 	if node == nil || node.Kind != yaml.ScalarNode {
 		return nil, nil
 	}
@@ -126,9 +153,10 @@ func symbolContextAt(stream *yamlstream.Stream, line0, col0 int) (*renameContext
 
 	// Reference rename: match configured references in rules/k8s.yaml.
 	// We intentionally keep it simple: only scalar references where we can infer target kind.
-	if parent != nil {
-		// The path returned for a scalar is relative in findNodeAt; for nested maps it becomes full (e.g. metadata.name).
-		// For references, we depend on the full path as returned.
+	// The path returned for a scalar is relative in findNodeAt; for nested maps it becomes full (e.g. metadata.name).
+	// For references, we depend on the full path as returned.
+	if state == nil || state.Resolver == nil || state.Resolver.Config == nil {
+		return nil, nil
 	}
 
 	// Infer ref target kind using config rules by re-walking the doc to build the cursor path.
@@ -168,6 +196,72 @@ func symbolContextAt(stream *yamlstream.Stream, line0, col0 int) (*renameContext
 		ctx.scopeNamespace = connected
 	}
 	return ctx, nil
+}
+
+func renameTargetAt(stream *yamlstream.Stream, line0, col0 int) (*renameContext, protocol.Range, string, error) {
+	var empty protocol.Range
+	if stream == nil {
+		return nil, empty, "", nil
+	}
+	line1 := line0 + 1
+	col1 := col0 + 1
+	if line1 <= 0 || col1 <= 0 {
+		return nil, empty, "", nil
+	}
+
+	doc := stream.DocForLine(line1)
+	if doc == nil || doc.Node == nil {
+		return nil, empty, "", nil
+	}
+
+	node, _ := findRenameScalarAtInDoc(doc.Node, line1, col1)
+	if node == nil || node.Kind != yaml.ScalarNode {
+		return nil, empty, "", nil
+	}
+
+	ctx, err := symbolContextAt(stream, line0, col0)
+	if err != nil || ctx == nil {
+		return ctx, empty, "", err
+	}
+
+	startChar := node.Column - 1
+	if node.Style == yaml.DoubleQuotedStyle || node.Style == yaml.SingleQuotedStyle {
+		// yaml.v3 reports the scalar column at the opening quote; LSP ranges should cover only the value.
+		startChar++
+	}
+	if startChar < 0 {
+		startChar = 0
+	}
+	endChar := startChar + len(node.Value)
+	if endChar < startChar {
+		endChar = startChar
+	}
+
+	rng := protocol.Range{
+		Start: protocol.Position{Line: uint32(line0), Character: uint32(startChar)},
+		End:   protocol.Position{Line: uint32(line0), Character: uint32(endChar)},
+	}
+	return ctx, rng, node.Value, nil
+}
+
+func findRenameScalarAtInDoc(docNode *yaml.Node, line1, col1 int) (*yaml.Node, []string) {
+	node, parent, path := findNodeAtInDoc(docNode, line1, col1)
+	if node == nil || node.Kind != yaml.ScalarNode {
+		return nil, nil
+	}
+	// If the cursor is on a mapping key, rename should apply to the corresponding scalar value.
+	if parent != nil && parent.Kind == yaml.MappingNode {
+		for i := 0; i < len(parent.Content); i += 2 {
+			if parent.Content[i] == node {
+				val := parent.Content[i+1]
+				if val == nil || val.Kind != yaml.ScalarNode {
+					return nil, nil
+				}
+				return val, path
+			}
+		}
+	}
+	return node, path
 }
 
 func buildRenameWorkspaceEdit(ctx *renameContext, newName string, scopeNamespace string) (*protocol.WorkspaceEdit, error) {

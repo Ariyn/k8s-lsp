@@ -2,9 +2,12 @@ package lsp
 
 import (
 	"os"
+	"strings"
 	"testing"
 
+	"k8s-lsp/pkg/config"
 	"k8s-lsp/pkg/indexer"
+	"k8s-lsp/pkg/resolver"
 	"k8s-lsp/pkg/yamlstream"
 
 	protocol "github.com/tliron/glsp/protocol_3_16"
@@ -122,6 +125,266 @@ func TestRename_PersistentVolume_WithClaimRefNamespace_OnlyEditsThatNamespace(t 
 	if _, ok := edit.Changes[pvcOtherURI]; ok {
 		t.Fatalf("expected other namespace PVC to NOT be edited")
 	}
+}
+
+func TestPrepareRename_HyphenatedName_ReturnsFullScalarRange(t *testing.T) {
+	// Ensure prepareRename returns full scalar range for values like "sec-old",
+	// so the client doesn't fall back to word-splitting on '-'.
+	tmp := mustTempFile(t, "s-*.yaml", "apiVersion: v1\nkind: Secret\nmetadata:\n  name: sec-old\n  namespace: default\n")
+	defer tmp.cleanup()
+	uri := "file://" + tmp.path
+
+	store := indexer.NewStore()
+	store.Add(&indexer.K8sResource{Kind: "Secret", Namespace: "default", Name: "sec-old", FilePath: tmp.path, Line: 3, Col: 8})
+	state = &ServerState{Store: store, Documents: map[string]string{}, DocVersion: map[string]int32{}, YAMLCache: yamlstream.NewCache()}
+	state.setDocument(uri, mustReadFile(t, tmp.path), 1)
+
+	params := &protocol.PrepareRenameParams{}
+	params.TextDocument.URI = uri
+	// Cursor inside "sec-old" (line: "  name: sec-old")
+	params.Position.Line = 3
+	params.Position.Character = 12
+
+	res, err := textDocumentPrepareRename(nil, params)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if res == nil {
+		t.Fatalf("expected prepareRename result")
+	}
+	withPH, ok := res.(protocol.RangeWithPlaceholder)
+	if !ok {
+		t.Fatalf("expected RangeWithPlaceholder, got %T", res)
+	}
+	if withPH.Placeholder != "sec-old" {
+		t.Fatalf("expected placeholder 'sec-old', got %q", withPH.Placeholder)
+	}
+	if withPH.Range.Start.Line != 3 || withPH.Range.End.Line != 3 {
+		t.Fatalf("expected same-line range, got %v", withPH.Range)
+	}
+	if withPH.Range.Start.Character != 8 {
+		t.Fatalf("expected start char 8, got %d", withPH.Range.Start.Character)
+	}
+	if withPH.Range.End.Character != 8+uint32(len("sec-old")) {
+		t.Fatalf("expected end char %d, got %d", 8+uint32(len("sec-old")), withPH.Range.End.Character)
+	}
+}
+
+func TestPrepareRename_EdgeCases(t *testing.T) {
+	findNeedle := func(tb testing.TB, content, needle string) (line0 int, char0 int, lineText string) {
+		tb.Helper()
+		lines := strings.Split(content, "\n")
+		for i, ln := range lines {
+			if j := strings.Index(ln, needle); j >= 0 {
+				return i, j, ln
+			}
+		}
+		tb.Fatalf("needle %q not found", needle)
+		return 0, 0, ""
+	}
+
+	t.Run("cursor at end of scalar allowed", func(t *testing.T) {
+		content := "apiVersion: v1\nkind: Secret\nmetadata:\n  name: sec-old\n  namespace: default\n"
+		tmp := mustTempFile(t, "s-*.yaml", content)
+		defer tmp.cleanup()
+		uri := "file://" + tmp.path
+
+		store := indexer.NewStore()
+		store.Add(&indexer.K8sResource{Kind: "Secret", Namespace: "default", Name: "sec-old", FilePath: tmp.path, Line: 3, Col: 8})
+		state = &ServerState{Store: store, Documents: map[string]string{}, DocVersion: map[string]int32{}, YAMLCache: yamlstream.NewCache()}
+		state.setDocument(uri, content, 1)
+
+		line0, startChar, _ := findNeedle(t, content, "sec-old")
+		params := &protocol.PrepareRenameParams{}
+		params.TextDocument.URI = uri
+		params.Position.Line = uint32(line0)
+		params.Position.Character = uint32(startChar + len("sec-old"))
+
+		res, err := textDocumentPrepareRename(nil, params)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		withPH, ok := res.(protocol.RangeWithPlaceholder)
+		if !ok {
+			t.Fatalf("expected RangeWithPlaceholder, got %T", res)
+		}
+		if withPH.Placeholder != "sec-old" {
+			t.Fatalf("expected placeholder 'sec-old', got %q", withPH.Placeholder)
+		}
+		if withPH.Range.Start.Character != uint32(startChar) {
+			t.Fatalf("expected start char %d, got %d", startChar, withPH.Range.Start.Character)
+		}
+		if withPH.Range.End.Character != uint32(startChar+len("sec-old")) {
+			t.Fatalf("expected end char %d, got %d", startChar+len("sec-old"), withPH.Range.End.Character)
+		}
+	})
+
+	t.Run("cursor on hyphen returns full scalar", func(t *testing.T) {
+		content := "apiVersion: v1\nkind: Secret\nmetadata:\n  name: sec-old\n  namespace: default\n"
+		tmp := mustTempFile(t, "s-*.yaml", content)
+		defer tmp.cleanup()
+		uri := "file://" + tmp.path
+
+		store := indexer.NewStore()
+		store.Add(&indexer.K8sResource{Kind: "Secret", Namespace: "default", Name: "sec-old", FilePath: tmp.path, Line: 3, Col: 8})
+		state = &ServerState{Store: store, Documents: map[string]string{}, DocVersion: map[string]int32{}, YAMLCache: yamlstream.NewCache()}
+		state.setDocument(uri, content, 1)
+
+		line0, startChar, lineText := findNeedle(t, content, "sec-old")
+		hy := strings.Index(lineText, "-")
+		if hy < 0 {
+			t.Fatalf("expected hyphen in line")
+		}
+
+		params := &protocol.PrepareRenameParams{}
+		params.TextDocument.URI = uri
+		params.Position.Line = uint32(line0)
+		params.Position.Character = uint32(hy)
+
+		res, err := textDocumentPrepareRename(nil, params)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		withPH, ok := res.(protocol.RangeWithPlaceholder)
+		if !ok {
+			t.Fatalf("expected RangeWithPlaceholder, got %T", res)
+		}
+		if withPH.Placeholder != "sec-old" {
+			t.Fatalf("expected placeholder 'sec-old', got %q", withPH.Placeholder)
+		}
+		if withPH.Range.Start.Character != uint32(startChar) {
+			t.Fatalf("expected start char %d, got %d", startChar, withPH.Range.Start.Character)
+		}
+		if withPH.Range.End.Character != uint32(startChar+len("sec-old")) {
+			t.Fatalf("expected end char %d, got %d", startChar+len("sec-old"), withPH.Range.End.Character)
+		}
+	})
+
+	t.Run("quoted scalar returns range for inner text", func(t *testing.T) {
+		content := "apiVersion: v1\nkind: Secret\nmetadata:\n  name: \"sec-old\"\n  namespace: default\n"
+		tmp := mustTempFile(t, "s-*.yaml", content)
+		defer tmp.cleanup()
+		uri := "file://" + tmp.path
+
+		store := indexer.NewStore()
+		store.Add(&indexer.K8sResource{Kind: "Secret", Namespace: "default", Name: "sec-old", FilePath: tmp.path, Line: 3, Col: 8})
+		state = &ServerState{Store: store, Documents: map[string]string{}, DocVersion: map[string]int32{}, YAMLCache: yamlstream.NewCache()}
+		state.setDocument(uri, content, 1)
+
+		line0, startChar, _ := findNeedle(t, content, "sec-old")
+		params := &protocol.PrepareRenameParams{}
+		params.TextDocument.URI = uri
+		params.Position.Line = uint32(line0)
+		params.Position.Character = uint32(startChar + 1)
+
+		res, err := textDocumentPrepareRename(nil, params)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		withPH, ok := res.(protocol.RangeWithPlaceholder)
+		if !ok {
+			t.Fatalf("expected RangeWithPlaceholder, got %T", res)
+		}
+		if withPH.Placeholder != "sec-old" {
+			t.Fatalf("expected placeholder 'sec-old', got %q", withPH.Placeholder)
+		}
+		if withPH.Range.Start.Character != uint32(startChar) {
+			t.Fatalf("expected start char %d, got %d", startChar, withPH.Range.Start.Character)
+		}
+		if withPH.Range.End.Character != uint32(startChar+len("sec-old")) {
+			t.Fatalf("expected end char %d, got %d", startChar+len("sec-old"), withPH.Range.End.Character)
+		}
+	})
+
+	t.Run("cursor on key still selects value", func(t *testing.T) {
+		content := "apiVersion: v1\nkind: Secret\nmetadata:\n  name: sec-old\n  namespace: default\n"
+		tmp := mustTempFile(t, "s-*.yaml", content)
+		defer tmp.cleanup()
+		uri := "file://" + tmp.path
+
+		store := indexer.NewStore()
+		store.Add(&indexer.K8sResource{Kind: "Secret", Namespace: "default", Name: "sec-old", FilePath: tmp.path, Line: 3, Col: 8})
+		state = &ServerState{Store: store, Documents: map[string]string{}, DocVersion: map[string]int32{}, YAMLCache: yamlstream.NewCache()}
+		state.setDocument(uri, content, 1)
+
+		line0, _, lineText := findNeedle(t, content, "name:")
+		keyChar := strings.Index(lineText, "name:")
+		if keyChar < 0 {
+			t.Fatalf("expected key in line")
+		}
+		_, valueStartChar, _ := findNeedle(t, content, "sec-old")
+
+		params := &protocol.PrepareRenameParams{}
+		params.TextDocument.URI = uri
+		params.Position.Line = uint32(line0)
+		params.Position.Character = uint32(keyChar + 1)
+
+		res, err := textDocumentPrepareRename(nil, params)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		withPH, ok := res.(protocol.RangeWithPlaceholder)
+		if !ok {
+			t.Fatalf("expected RangeWithPlaceholder, got %T", res)
+		}
+		if withPH.Placeholder != "sec-old" {
+			t.Fatalf("expected placeholder 'sec-old', got %q", withPH.Placeholder)
+		}
+		if withPH.Range.Start.Character != uint32(valueStartChar) {
+			t.Fatalf("expected start char %d, got %d", valueStartChar, withPH.Range.Start.Character)
+		}
+		if withPH.Range.End.Character != uint32(valueStartChar+len("sec-old")) {
+			t.Fatalf("expected end char %d, got %d", valueStartChar+len("sec-old"), withPH.Range.End.Character)
+		}
+	})
+
+	t.Run("reference path returns full scalar", func(t *testing.T) {
+		content := "apiVersion: apps/v1\nkind: Deployment\nmetadata:\n  name: d\n  namespace: default\nspec:\n  template:\n    spec:\n      containers:\n        - name: c\n          envFrom:\n            - secretRef:\n                name: sec-old\n"
+		tmp := mustTempFile(t, "d-*.yaml", content)
+		defer tmp.cleanup()
+		uri := "file://" + tmp.path
+
+		store := indexer.NewStore()
+		state = &ServerState{Store: store, Documents: map[string]string{}, DocVersion: map[string]int32{}, YAMLCache: yamlstream.NewCache()}
+		state.setDocument(uri, content, 1)
+
+		cfg := &config.Config{References: []config.Reference{
+			{
+				Name:       "test.secretref",
+				Symbol:     "k8s.resource.name",
+				TargetKind: "Secret",
+				Match: config.ReferenceMatch{
+					Kinds: []string{"Deployment"},
+					Path:  "spec.template.spec.containers[].envFrom[].secretRef.name",
+				},
+			},
+		}}
+		state.Resolver = resolver.NewResolver(store, cfg)
+
+		line0, startChar, _ := findNeedle(t, content, "sec-old")
+		params := &protocol.PrepareRenameParams{}
+		params.TextDocument.URI = uri
+		params.Position.Line = uint32(line0)
+		params.Position.Character = uint32(startChar + 2)
+
+		res, err := textDocumentPrepareRename(nil, params)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		withPH, ok := res.(protocol.RangeWithPlaceholder)
+		if !ok {
+			t.Fatalf("expected RangeWithPlaceholder, got %T", res)
+		}
+		if withPH.Placeholder != "sec-old" {
+			t.Fatalf("expected placeholder 'sec-old', got %q", withPH.Placeholder)
+		}
+		if withPH.Range.Start.Character != uint32(startChar) {
+			t.Fatalf("expected start char %d, got %d", startChar, withPH.Range.Start.Character)
+		}
+		if withPH.Range.End.Character != uint32(startChar+len("sec-old")) {
+			t.Fatalf("expected end char %d, got %d", startChar+len("sec-old"), withPH.Range.End.Character)
+		}
+	})
 }
 
 func mustReadFile(tb testing.TB, path string) string {
