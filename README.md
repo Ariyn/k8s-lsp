@@ -49,6 +49,14 @@ VS Code에서 Kubernetes YAML을 더 빠르게 작성/탐색/리팩터링할 수
 
 성공하면 리포 루트에 `k8s-lsp-client.vsix`가 생성됩니다.
 
+## (메인테이너) 자동 배포: VS Code Marketplace
+
+- 태그 `v*`를 push 하면 GitHub Actions가 VSIX를 빌드하고, `VSCE_PAT` 시크릿이 설정되어 있으면 VS Code Marketplace로 자동 publish 합니다.
+- 수동 실행이 필요하면 Actions에서 `Release Extension` 워크플로를 `workflow_dispatch`로 실행하고 `publish=true`를 선택합니다.
+
+필요 시크릿:
+- `VSCE_PAT`: Visual Studio Marketplace Personal Access Token (publisher: `k8s-lsp` 권한 필요)
+
 ## 사용 방법 (빠른 시작)
 
 1) VSIX 설치 후, 워크스페이스에서 `.yaml`/`.yml` 파일을 열면 확장이 활성화됩니다(activation: `onLanguage:yaml`).
