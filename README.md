@@ -87,41 +87,15 @@ VS Code에서 Kubernetes YAML을 더 빠르게 작성/탐색/리팩터링할 수
 
 설정 경로: `Settings` → `Extensions` → `Kubernetes LSP` (또는 `settings.json`에 직접 추가)
 
-주요 설정:
-- `k8sLsp.serverPath` (기본: `k8s-lsp`)
-  - 서버 바이너리 경로를 직접 지정합니다.
-  - 확장이 서버 바이너리를 찾지 못하면 가장 먼저 이 설정을 확인하세요.
-- `k8sLsp.crdSources` (기본: `[]`)
-  - CRD YAML 소스 목록(`https://`, 파일 경로, `file://` URI)
-- `k8sLsp.schemaSources` (기본: `[]`)
-  - 추가 스키마 팩 소스 목록(`https://`, 파일 경로, `file://` URI)
-- `k8sLsp.diagnosticsDebounceMs` (기본: `200`)
-  - 편집 중 진단 발행 debounce(ms). `0`이면 비활성
-- `k8sLsp.indexDebounceMs` (기본: `250`)
-  - 편집 중 인덱싱 debounce(ms). `0`이면 비활성
-- `k8sLsp.formatting.enabled` (기본: `true`)
-  - 서버 기반 YAML 포매팅(Format Document) 활성화
-- `k8sLsp.formatting.indentSize` (기본: `2`)
-  - 포매팅 들여쓰기 크기
-- `k8sLsp.formatting.disableForTemplates` (기본: `true`)
-  - Helm 등 템플릿 신호가 있는 문서에서 포매팅을 no-op 처리
-- `k8sLsp.trace.server` (기본: `off`)
-  - VS Code ↔ 언어 서버 간 통신 로그를 출력합니다(`messages`/`verbose`).
+자주 쓰는 설정(요약):
+- `k8sLsp.serverPath`: 서버 바이너리 경로(서버를 못 찾는 경우 우선 확인)
+- `k8sLsp.crdSources`: 추가로 로딩할 CRD YAML 소스 목록
+- `k8sLsp.schemaSources`: 추가 스키마 팩 소스 목록
+- `k8sLsp.diagnosticsDebounceMs` / `k8sLsp.indexDebounceMs`: 성능/반응 속도 튜닝
+- `k8sLsp.formatting.*`: 포매팅 옵션
+- `k8sLsp.trace.server`: VS Code ↔ 서버 통신 로그
 
-예시(`settings.json`):
-```json
-{
-  "k8sLsp.diagnosticsDebounceMs": 200,
-  "k8sLsp.indexDebounceMs": 250,
-  "k8sLsp.crdSources": [
-    "https://raw.githubusercontent.com/traefik/traefik/v3.0/docs/content/reference/dynamic-configuration/kubernetes-crd-definition-v1.yml"
-  ],
-  "k8sLsp.schemaSources": [
-    "./schemas/core.yaml",
-    "./schemas/networking.yaml"
-  ]
-}
-```
+전체 설정 레퍼런스/예시는 [docs/CONFIGURATION.md](docs/CONFIGURATION.md)를 참고하세요.
 
 ## 제공 커맨드
 

@@ -35,32 +35,10 @@ Kubernetes YAML을 작성할 때 **참조 이동 / 사용처 찾기 / Rename 리
 
 VS Code 설정에서 `Kubernetes LSP` 섹션을 찾거나, `settings.json`에 직접 추가할 수 있습니다.
 
-자주 쓰는 설정:
+설정 레퍼런스/예시는 아래 문서를 참고하세요.
+- [docs/CONFIGURATION.md](../docs/CONFIGURATION.md)
 
-- `k8sLsp.serverPath`: `k8s-lsp` 실행 파일 경로(서버를 못 찾는 경우 우선 확인)
-- `k8sLsp.crdSources`: 인덱싱할 CRD YAML 소스 목록(https/file/file://)
-- `k8sLsp.schemaSources`: 추가 스키마 팩 소스 목록(https/file/file://)
-- `k8sLsp.diagnosticsDebounceMs`: 편집 후 진단 발행 지연(ms)
-- `k8sLsp.indexDebounceMs`: 편집 후 인덱싱 지연(ms)
-- `k8sLsp.formatting.enabled`: 포매팅 활성화
-- `k8sLsp.formatting.disableForTemplates`: Helm 등 템플릿 문서에서 포매팅 보호
-
-예시:
-
-```json
-{
-	"k8sLsp.serverPath": "k8s-lsp",
-	"k8sLsp.diagnosticsDebounceMs": 200,
-	"k8sLsp.indexDebounceMs": 250,
-	"k8sLsp.crdSources": [
-		"https://raw.githubusercontent.com/traefik/traefik/v3.0/docs/content/reference/dynamic-configuration/kubernetes-crd-definition-v1.yml"
-	],
-	"k8sLsp.schemaSources": [
-		"./schemas/core.yaml",
-		"./schemas/networking.yaml"
-	]
-}
-```
+팁: 서버를 못 찾는다면 `k8sLsp.serverPath`를 먼저 확인하세요.
 
 ## 문제 해결
 
