@@ -18,6 +18,9 @@ Kubernetes YAML을 작성할 때 **참조 이동 / 사용처 찾기 / Rename 리
 2) 워크스페이스에서 `.yaml` / `.yml` 파일을 열면 자동 활성화됩니다.
 3) 참조 필드 위에서 `F12`(정의로 이동), `Shift+F12`(참조 찾기), `F2`(이름 바꾸기)를 사용해 보세요.
 
+동작 확인이 필요하면 루트 README의 Smoke Test 체크리스트를 참고하세요.
+- [README.md](../README.md)
+
 ## 제공 커맨드
 
 커맨드 팔레트에서 실행:
@@ -62,7 +65,10 @@ VS Code 설정에서 `Kubernetes LSP` 섹션을 찾거나, `settings.json`에 �
 ## 문제 해결
 
 - 기능이 동작하지 않으면 먼저 `k8sLsp.serverPath`가 올바른지 확인하세요.
-- 로그는 VS Code의 Output 패널에서 언어 서버 채널(또는 확장 출력)을 확인하세요.
+- 로그는 VS Code의 Output 패널에서 `Kubernetes LSP` 채널을 확인하세요.
+- 더 자세한 트러블슈팅/설정 레퍼런스:
+	- [docs/TROUBLESHOOTING.md](../docs/TROUBLESHOOTING.md)
+	- [docs/CONFIGURATION.md](../docs/CONFIGURATION.md)
 
 ## 더 자세한 설명
 

@@ -59,10 +59,29 @@ VS Code에서 Kubernetes YAML을 더 빠르게 작성/탐색/리팩터링할 수
 
 ## 사용 방법 (빠른 시작)
 
-1) VSIX 설치 후, 워크스페이스에서 `.yaml`/`.yml` 파일을 열면 확장이 활성화됩니다(activation: `onLanguage:yaml`).
-2) 참조 필드 위에서:
-   - `Go to Definition` / `Find All References` 등을 사용합니다.
-3) 문제가 있으면 Output에서 `Kubernetes LSP` 채널 로그를 확인합니다.
+### 60초 Quickstart
+
+1) VSIX 설치 후, 워크스페이스에서 `.yaml`/`.yml` 파일을 엽니다(activation: `onLanguage:yaml`).
+2) Output 패널에서 `Kubernetes LSP` 채널을 열어 서버가 정상 기동했는지 확인합니다.
+3) 아래 동작 확인(Smoke Test) 중 1~2개를 실행해 봅니다.
+
+### 동작 확인 (Smoke Test)
+
+- Completion: `apiVersion:` / `kind:` / `metadata:` 입력 중 자동완성 제안이 뜨는지
+- Hover: 필드/참조 값 위에 올렸을 때 추가 정보가 표시되는지
+- Diagnostics: 잘못된 필드를 넣었을 때 경고/에러가 뜨는지
+- Go to Definition / Find References: 참조 값에서 대상 리소스 정의로 이동/사용처 찾기가 되는지
+- Formatting: `Format Document`가 동작하는지(템플릿 문서는 기본적으로 보호)
+
+### 문제가 있을 때 가장 먼저 볼 것
+
+1) Output → `Kubernetes LSP` 채널 로그
+2) `k8sLsp.serverPath` 설정이 올바른지(서버 바이너리를 못 찾으면 확장이 에러를 띄우고, 로그에 탐색한 경로가 출력됩니다)
+3) 필요하면 `k8sLsp.trace.server`를 `messages` 또는 `verbose`로 올려 LSP 통신 로그를 확인합니다.
+
+더 자세한 설정/트러블슈팅은 아래 문서를 참고하세요.
+- 설정: [docs/CONFIGURATION.md](docs/CONFIGURATION.md)
+- 문제 해결: [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md)
 
 ## 설정 (VS Code)
 
@@ -86,6 +105,8 @@ VS Code에서 Kubernetes YAML을 더 빠르게 작성/탐색/리팩터링할 수
   - 포매팅 들여쓰기 크기
 - `k8sLsp.formatting.disableForTemplates` (기본: `true`)
   - Helm 등 템플릿 신호가 있는 문서에서 포매팅을 no-op 처리
+- `k8sLsp.trace.server` (기본: `off`)
+  - VS Code ↔ 언어 서버 간 통신 로그를 출력합니다(`messages`/`verbose`).
 
 예시(`settings.json`):
 ```json
