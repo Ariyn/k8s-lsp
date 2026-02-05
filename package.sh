@@ -43,6 +43,22 @@ if [ -d rules/schemas ]; then
     cp -r rules/schemas/. "$BUILD_DIR/bin/linux/x64/rules/schemas/"
 fi
 
+# Linux - ARM64
+echo "Building for Linux (ARM64)..."
+mkdir -p "$BUILD_DIR/bin/linux/arm64/rules"
+GOOS=linux GOARCH=arm64 go build -o "$BUILD_DIR/bin/linux/arm64/k8s-lsp" .
+chmod +x "$BUILD_DIR/bin/linux/arm64/k8s-lsp"
+cp rules/k8s.yaml "$BUILD_DIR/bin/linux/arm64/rules/"
+cp rules/validation.yaml "$BUILD_DIR/bin/linux/arm64/rules/"
+if [ -d schemas ]; then
+    mkdir -p "$BUILD_DIR/bin/linux/arm64/schemas"
+    cp -r schemas/. "$BUILD_DIR/bin/linux/arm64/schemas/"
+fi
+if [ -d rules/schemas ]; then
+    mkdir -p "$BUILD_DIR/bin/linux/arm64/rules/schemas"
+    cp -r rules/schemas/. "$BUILD_DIR/bin/linux/arm64/rules/schemas/"
+fi
+
 # macOS (Darwin) - AMD64
 echo "Building for macOS (AMD64)..."
 mkdir -p "$BUILD_DIR/bin/darwin/x64/rules"
@@ -75,19 +91,19 @@ if [ -d rules/schemas ]; then
     cp -r rules/schemas/. "$BUILD_DIR/bin/darwin/arm64/rules/schemas/"
 fi
 
-# windows (Windows) - AMD64
+# windows (win32) - AMD64
 echo "Building for Windows (AMD64)..."
-mkdir -p "$BUILD_DIR/bin/windows/x64/rules"
-GOOS=windows GOARCH=amd64 go build -o "$BUILD_DIR/bin/windows/x64/k8s-lsp.exe" .
-cp rules/k8s.yaml "$BUILD_DIR/bin/windows/x64/rules/"
-cp rules/validation.yaml "$BUILD_DIR/bin/windows/x64/rules/"
+mkdir -p "$BUILD_DIR/bin/win32/x64/rules"
+GOOS=windows GOARCH=amd64 go build -o "$BUILD_DIR/bin/win32/x64/k8s-lsp.exe" .
+cp rules/k8s.yaml "$BUILD_DIR/bin/win32/x64/rules/"
+cp rules/validation.yaml "$BUILD_DIR/bin/win32/x64/rules/"
 if [ -d schemas ]; then
-    mkdir -p "$BUILD_DIR/bin/windows/x64/schemas"
-    cp -r schemas/. "$BUILD_DIR/bin/windows/x64/schemas/"
+    mkdir -p "$BUILD_DIR/bin/win32/x64/schemas"
+    cp -r schemas/. "$BUILD_DIR/bin/win32/x64/schemas/"
 fi
 if [ -d rules/schemas ]; then
-    mkdir -p "$BUILD_DIR/bin/windows/x64/rules/schemas"
-    cp -r rules/schemas/. "$BUILD_DIR/bin/windows/x64/rules/schemas/"
+    mkdir -p "$BUILD_DIR/bin/win32/x64/rules/schemas"
+    cp -r rules/schemas/. "$BUILD_DIR/bin/win32/x64/rules/schemas/"
 fi
 
 # 3. (Skipped as we did it per platform)
@@ -114,6 +130,7 @@ npm run compile
 if [ -d "$BUILD_DIR/bin" ]; then
     chmod -R a+rX "$BUILD_DIR/bin"
     if [ -f "$BUILD_DIR/bin/linux/x64/k8s-lsp" ]; then chmod +x "$BUILD_DIR/bin/linux/x64/k8s-lsp"; fi
+    if [ -f "$BUILD_DIR/bin/linux/arm64/k8s-lsp" ]; then chmod +x "$BUILD_DIR/bin/linux/arm64/k8s-lsp"; fi
     if [ -f "$BUILD_DIR/bin/darwin/x64/k8s-lsp" ]; then chmod +x "$BUILD_DIR/bin/darwin/x64/k8s-lsp"; fi
     if [ -f "$BUILD_DIR/bin/darwin/arm64/k8s-lsp" ]; then chmod +x "$BUILD_DIR/bin/darwin/arm64/k8s-lsp"; fi
 fi
