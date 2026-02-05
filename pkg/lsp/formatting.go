@@ -104,6 +104,7 @@ func formatYAMLDocument(content string, indentSize int) (string, bool, error) {
 	enc := yaml.NewEncoder(&buf)
 	enc.SetIndent(indentSize)
 	for i := range docs {
+		enforceK8sLiteralBlockScalars(&docs[i])
 		if err := enc.Encode(&docs[i]); err != nil {
 			_ = enc.Close()
 			return "", false, err
@@ -204,7 +205,7 @@ func canonicalNodeBytes(n *yaml.Node) []byte {
 	switch n.Kind {
 	case yaml.ScalarNode:
 		// Tag carries type semantics (e.g. !!str vs !!int).
-		key := "S|" + n.Tag + "|" + strings.TrimSpace(n.Value)
+		key := "S|" + n.Tag + "|" + n.Value
 		sum := sha256.Sum256([]byte(key))
 		return sum[:]
 	case yaml.SequenceNode:
@@ -223,7 +224,7 @@ func canonicalNodeBytes(n *yaml.Node) []byte {
 			v := n.Content[i+1]
 			key := ""
 			if k != nil {
-				key = strings.TrimSpace(k.Value)
+				key = k.Value
 			}
 			vb := canonicalNodeBytes(v)
 			pairs = append(pairs, key+"="+hex.EncodeToString(vb))
@@ -234,8 +235,78 @@ func canonicalNodeBytes(n *yaml.Node) []byte {
 		return sum[:]
 	default:
 		// Treat other YAML node kinds conservatively.
-		sum := sha256.Sum256([]byte(fmt.Sprintf("K|%d|%s", n.Kind, strings.TrimSpace(n.Value))))
+		sum := sha256.Sum256([]byte(fmt.Sprintf("K|%d|%s", n.Kind, n.Value)))
 		return sum[:]
+	}
+}
+
+func enforceK8sLiteralBlockScalars(doc *yaml.Node) {
+	if doc == nil {
+		return
+	}
+
+	root := doc
+	if root.Kind == yaml.DocumentNode {
+		if len(root.Content) == 0 {
+			return
+		}
+		root = root.Content[0]
+	}
+	if root.Kind != yaml.MappingNode {
+		return
+	}
+
+	kind, ok := mappingStringValue(root, "kind")
+	if !ok {
+		return
+	}
+
+	switch kind {
+	case "ConfigMap":
+		if data, ok := mappingValue(root, "data"); ok {
+			ensureLiteralStyleForMultilineMappingValues(data)
+		}
+	case "Secret":
+		if data, ok := mappingValue(root, "stringData"); ok {
+			ensureLiteralStyleForMultilineMappingValues(data)
+		}
+	}
+}
+
+func mappingValue(m *yaml.Node, key string) (*yaml.Node, bool) {
+	if m == nil || m.Kind != yaml.MappingNode {
+		return nil, false
+	}
+	for i := 0; i+1 < len(m.Content); i += 2 {
+		k := m.Content[i]
+		v := m.Content[i+1]
+		if k != nil && k.Kind == yaml.ScalarNode && k.Value == key {
+			return v, true
+		}
+	}
+	return nil, false
+}
+
+func mappingStringValue(m *yaml.Node, key string) (string, bool) {
+	v, ok := mappingValue(m, key)
+	if !ok || v == nil || v.Kind != yaml.ScalarNode {
+		return "", false
+	}
+	return v.Value, true
+}
+
+func ensureLiteralStyleForMultilineMappingValues(n *yaml.Node) {
+	if n == nil || n.Kind != yaml.MappingNode {
+		return
+	}
+	for i := 0; i+1 < len(n.Content); i += 2 {
+		v := n.Content[i+1]
+		if v == nil || v.Kind != yaml.ScalarNode {
+			continue
+		}
+		if strings.Contains(v.Value, "\n") {
+			v.Style = yaml.LiteralStyle
+		}
 	}
 }
 

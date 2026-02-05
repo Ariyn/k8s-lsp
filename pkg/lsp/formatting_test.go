@@ -44,6 +44,35 @@ func TestFormatting_MultiDoc_PreservesSeparator(t *testing.T) {
 	}
 }
 
+func TestFormatting_ConfigMapData_PreservesLiteralBlockScalar(t *testing.T) {
+	in := "" +
+		"apiVersion: v1\n" +
+		"kind: ConfigMap\n" +
+		"metadata:\n" +
+		" name: x\n" +
+		"data:\n" +
+		"  file.conf: |\n" +
+		"    line1\n" +
+		"    line2\n"
+
+	out, changed, err := formatYAMLDocument(in, 2)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !changed {
+		t.Fatalf("expected changed")
+	}
+	if !yamlMeaningEqual(in, out) {
+		t.Fatalf("expected meaning preserved")
+	}
+	if !strings.Contains(out, "file.conf: |\n") {
+		t.Fatalf("expected literal block scalar (|) to be preserved, got:\n%s", out)
+	}
+	if strings.Contains(out, "file.conf: \"") {
+		t.Fatalf("expected block scalar, not a quoted single-line string, got:\n%s", out)
+	}
+}
+
 func TestFormatting_Template_NoOp(t *testing.T) {
 	in := "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: {{ .Values.name }}\n"
 	state = &ServerState{
