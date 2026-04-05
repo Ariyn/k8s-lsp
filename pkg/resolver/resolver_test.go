@@ -877,19 +877,20 @@ spec:
 	}
 }
 
-func TestResolveDefinition_SelectorValue_GoesToDeploymentTemplateLabel(t *testing.T) {
+func TestResolveDefinition_ServiceSelectorValue_GoesToAllMatchingWorkloadLabels(t *testing.T) {
 	cfg := &config.Config{
 		Symbols: []config.Symbol{
 			{
 				Name: "k8s.resource.name",
 				Definitions: []config.SymbolDefinition{
-					{Kinds: []string{"Deployment", "Service", "PodDisruptionBudget"}, Path: "metadata.name"},
+					{Kinds: []string{"Deployment", "StatefulSet", "DaemonSet", "Pod", "Service", "PodDisruptionBudget"}, Path: "metadata.name"},
 				},
 			},
 			{
 				Name: "k8s.label",
 				Definitions: []config.SymbolDefinition{
-					{Kinds: []string{"Deployment"}, Path: "spec.template.metadata.labels"},
+					{Kinds: []string{"Pod"}, Path: "metadata.labels"},
+					{Kinds: []string{"Deployment", "StatefulSet", "DaemonSet"}, Path: "spec.template.metadata.labels"},
 				},
 			},
 		},
@@ -919,9 +920,15 @@ func TestResolveDefinition_SelectorValue_GoesToDeploymentTemplateLabel(t *testin
 	idx := indexer.NewIndexer(store, cfg)
 
 	deployPath := "/tmp/def-deploy.yaml"
+	statefulSetPath := "/tmp/def-statefulset.yaml"
+	daemonSetPath := "/tmp/def-daemonset.yaml"
+	podPath := "/tmp/def-pod.yaml"
 	servicePath := "/tmp/def-svc.yaml"
 	pdbPath := "/tmp/def-pdb.yaml"
 	deployURI := "file:///tmp/def-deploy.yaml"
+	statefulSetURI := "file:///tmp/def-statefulset.yaml"
+	daemonSetURI := "file:///tmp/def-daemonset.yaml"
+	podURI := "file:///tmp/def-pod.yaml"
 	serviceURI := "file:///tmp/def-svc.yaml"
 	pdbURI := "file:///tmp/def-pdb.yaml"
 
@@ -943,6 +950,61 @@ spec:
       containers:
       - name: app
         image: nginx
+`, "\n")
+
+	statefulSetYaml := strings.TrimLeft(`
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: demo-sts
+  namespace: default
+spec:
+  selector:
+    matchLabels:
+      app: pocketbase
+  serviceName: demo-sts
+  template:
+    metadata:
+      labels:
+        app: pocketbase
+    spec:
+      containers:
+      - name: app
+        image: nginx
+`, "\n")
+
+	daemonSetYaml := strings.TrimLeft(`
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: demo-ds
+  namespace: default
+spec:
+  selector:
+    matchLabels:
+      app: pocketbase
+  template:
+    metadata:
+      labels:
+        app: pocketbase
+    spec:
+      containers:
+      - name: app
+        image: nginx
+`, "\n")
+
+	podYaml := strings.TrimLeft(`
+apiVersion: v1
+kind: Pod
+metadata:
+  name: demo-pod
+  namespace: default
+  labels:
+    app: pocketbase
+spec:
+  containers:
+  - name: app
+    image: nginx
 `, "\n")
 
 	serviceYaml := strings.TrimLeft(`
@@ -975,26 +1037,41 @@ spec:
 `, "\n")
 
 	idx.IndexContent(deployPath, deploymentYaml)
+	idx.IndexContent(statefulSetPath, statefulSetYaml)
+	idx.IndexContent(daemonSetPath, daemonSetYaml)
+	idx.IndexContent(podPath, podYaml)
 	idx.IndexContent(servicePath, serviceYaml)
 	idx.IndexContent(pdbPath, pdbYaml)
 
 	r := NewResolver(store, cfg)
 
-	// 1) Service selector value -> Deployment template label value
+	// 1) Service selector value -> matching Deployment/StatefulSet/DaemonSet template labels and Pod labels
 	// In serviceYaml: line with "app: pocketbase" under spec.selector is line 7 (0-based)
 	locs, err := r.ResolveDefinition(serviceYaml, serviceURI, 7, 9)
 	if err != nil {
 		t.Fatalf("ResolveDefinition failed: %v", err)
 	}
-	foundDeploy := false
+	if len(locs) != 4 {
+		for _, l := range locs {
+			t.Logf("got link: target=%s start=%d:%d end=%d:%d", l.TargetURI, l.TargetRange.Start.Line, l.TargetRange.Start.Character, l.TargetRange.End.Line, l.TargetRange.End.Character)
+		}
+		t.Fatalf("Expected 4 locations, got %d", len(locs))
+	}
+	wantTargets := map[string]bool{
+		deployURI:      false,
+		statefulSetURI: false,
+		daemonSetURI:   false,
+		podURI:         false,
+	}
 	for _, l := range locs {
-		if l.TargetURI == deployURI {
-			foundDeploy = true
-			break
+		if _, ok := wantTargets[l.TargetURI]; ok {
+			wantTargets[l.TargetURI] = true
 		}
 	}
-	if !foundDeploy {
-		t.Fatalf("Expected to find deployment label definition from service selector")
+	for targetURI, found := range wantTargets {
+		if !found {
+			t.Fatalf("Expected to find label definition from service selector for %s", targetURI)
+		}
 	}
 
 	// 2) Deployment selector.matchLabels value -> Deployment template label value

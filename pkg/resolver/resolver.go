@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"k8s-lsp/pkg/config"
@@ -1982,6 +1983,10 @@ func (r *Resolver) findWorkloadsByLabel(namespace, key, value string, originRang
 	}
 	resources := r.Store.FindByLabel(key, value)
 	for _, res := range resources {
+		if !isServiceSelectorTargetKind(res.Kind) {
+			continue
+		}
+
 		resNS := res.Namespace
 		if resNS == "" {
 			resNS = "default"
@@ -2004,7 +2009,7 @@ func (r *Resolver) findWorkloadsByLabel(namespace, key, value string, originRang
 				break
 			}
 		}
-		if labelNode, err := findResourceLabelValueInFile(res.FilePath, res.Kind, resNS, res.Name, key, value); err == nil && labelNode != nil {
+		if labelNode, err := findServiceSelectorLabelValueInFile(res.FilePath, res.Kind, resNS, res.Name, key, value); err == nil && labelNode != nil {
 			targetRange = scalarRange(labelNode)
 		}
 		links = append(links, protocol.LocationLink{
@@ -2014,10 +2019,19 @@ func (r *Resolver) findWorkloadsByLabel(namespace, key, value string, originRang
 			TargetSelectionRange: targetRange,
 		})
 	}
+	sort.SliceStable(links, func(i, j int) bool {
+		if links[i].TargetURI != links[j].TargetURI {
+			return links[i].TargetURI < links[j].TargetURI
+		}
+		if links[i].TargetRange.Start.Line != links[j].TargetRange.Start.Line {
+			return links[i].TargetRange.Start.Line < links[j].TargetRange.Start.Line
+		}
+		return links[i].TargetRange.Start.Character < links[j].TargetRange.Start.Character
+	})
 	return links
 }
 
-func findResourceLabelValueInFile(filePath, kind, namespace, name, labelKey, labelValue string) (*yaml.Node, error) {
+func findServiceSelectorLabelValueInFile(filePath, kind, namespace, name, labelKey, labelValue string) (*yaml.Node, error) {
 	if filePath == "" {
 		return nil, nil
 	}
@@ -2057,38 +2071,64 @@ func findResourceLabelValueInFile(filePath, kind, namespace, name, labelKey, lab
 			continue
 		}
 
-		// metadata.labels
-		if meta := getMappingValue(root, "metadata"); meta != nil {
-			if labels := getMappingValue(meta, "labels"); labels != nil && labels.Kind == yaml.MappingNode {
-				for i := 0; i < len(labels.Content); i += 2 {
-					k := labels.Content[i]
-					v := labels.Content[i+1]
-					if k != nil && v != nil && k.Value == labelKey && v.Kind == yaml.ScalarNode && v.Value == labelValue {
-						return v, nil
-					}
-				}
-			}
-		}
-
-		// spec.template.metadata.labels
-		if spec := getMappingValue(root, "spec"); spec != nil {
-			if tmpl := getMappingValue(spec, "template"); tmpl != nil {
-				if meta := getMappingValue(tmpl, "metadata"); meta != nil {
-					if labels := getMappingValue(meta, "labels"); labels != nil && labels.Kind == yaml.MappingNode {
-						for i := 0; i < len(labels.Content); i += 2 {
-							k := labels.Content[i]
-							v := labels.Content[i+1]
-							if k != nil && v != nil && k.Value == labelKey && v.Kind == yaml.ScalarNode && v.Value == labelValue {
-								return v, nil
-							}
-						}
-					}
-				}
+		for _, labels := range selectorTargetLabelMaps(root, kind) {
+			if labelNode := findLabelValueInMapping(labels, labelKey, labelValue); labelNode != nil {
+				return labelNode, nil
 			}
 		}
 	}
 
 	return nil, nil
+}
+
+func findResourceLabelValueInFile(filePath, kind, namespace, name, labelKey, labelValue string) (*yaml.Node, error) {
+	return findServiceSelectorLabelValueInFile(filePath, kind, namespace, name, labelKey, labelValue)
+}
+
+func isServiceSelectorTargetKind(kind string) bool {
+	switch kind {
+	case "Deployment", "StatefulSet", "DaemonSet", "Pod":
+		return true
+	default:
+		return false
+	}
+}
+
+func selectorTargetLabelMaps(root *yaml.Node, kind string) []*yaml.Node {
+	switch kind {
+	case "Deployment", "StatefulSet", "DaemonSet":
+		if spec := getMappingValue(root, "spec"); spec != nil {
+			if tmpl := getMappingValue(spec, "template"); tmpl != nil {
+				if meta := getMappingValue(tmpl, "metadata"); meta != nil {
+					if labels := getMappingValue(meta, "labels"); labels != nil {
+						return []*yaml.Node{labels}
+					}
+				}
+			}
+		}
+	case "Pod":
+		if meta := getMappingValue(root, "metadata"); meta != nil {
+			if labels := getMappingValue(meta, "labels"); labels != nil {
+				return []*yaml.Node{labels}
+			}
+		}
+	}
+
+	return nil
+}
+
+func findLabelValueInMapping(labels *yaml.Node, labelKey, labelValue string) *yaml.Node {
+	if labels == nil || labels.Kind != yaml.MappingNode {
+		return nil
+	}
+	for i := 0; i < len(labels.Content); i += 2 {
+		k := labels.Content[i]
+		v := labels.Content[i+1]
+		if k != nil && v != nil && k.Value == labelKey && v.Kind == yaml.ScalarNode && v.Value == labelValue {
+			return v
+		}
+	}
+	return nil
 }
 
 func (r *Resolver) findServiceByName(name string, originRange protocol.Range) []protocol.LocationLink {
@@ -2843,7 +2883,7 @@ func (r *Resolver) BuildEmbeddedContentTextEdit(docContent string, key string, n
 	edit := &protocol.TextEdit{
 		Range: protocol.Range{
 			Start: protocol.Position{Line: uint32(valueLineIdx), Character: uint32(valueCharIdx)},
-			End:   protocol.Position{Line: uint32(stopLine), Character: uint32(func() int {
+			End: protocol.Position{Line: uint32(stopLine), Character: uint32(func() int {
 				if isBlock || stopLine >= len(lines) {
 					return 0
 				}
