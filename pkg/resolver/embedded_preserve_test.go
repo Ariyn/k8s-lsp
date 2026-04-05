@@ -676,3 +676,50 @@ func TestBuildEmbeddedContentTextEdit_CRLFNormalizationAndNoCarriageReturns(t *t
 		t.Fatalf("expected CRLF-normalized content, got:\n%s", updatedApp)
 	}
 }
+
+func TestBuildEmbeddedContentTextEdit_ReplacesWholeBlockScalarAcrossBlankLines(t *testing.T) {
+	cfg := &config.Config{}
+	store := indexer.NewStore()
+	r := NewResolver(store, cfg)
+
+	docContent := "" +
+		"apiVersion: v1\n" +
+		"kind: ConfigMap\n" +
+		"metadata:\n" +
+		"  name: cm\n" +
+		"  namespace: default\n" +
+		"data:\n" +
+		"  app.conf: |-\n" +
+		"    old-a\n" +
+		"\n" +
+		"    old-b\n" +
+		"  keep: |-\n" +
+		"    stay\n"
+
+	edit, err := r.BuildEmbeddedContentTextEdit(docContent, "app.conf", "new-a\n\nnew-b\n", "cm", "default")
+	if err != nil {
+		t.Fatalf("BuildEmbeddedContentTextEdit failed: %v", err)
+	}
+
+	updated, err := applyTextEdit(docContent, *edit)
+	if err != nil {
+		t.Fatalf("applyTextEdit failed: %v", err)
+	}
+
+	updatedApp := extractYamlMappingEntry(updated, "app.conf")
+	if strings.Contains(updatedApp, "old-a") || strings.Contains(updatedApp, "old-b") {
+		t.Fatalf("expected previous block scalar content to be removed, got:\n%s", updatedApp)
+	}
+	if strings.Contains(updatedApp, "\\n") {
+		t.Fatalf("expected actual blank line, not escaped newline sequence, got:\n%s", updatedApp)
+	}
+	appLines := strings.Split(strings.TrimRight(updatedApp, "\n"), "\n")
+	if len(appLines) < 4 || !strings.Contains(appLines[0], "app.conf: |-") || strings.TrimSpace(appLines[1]) != "new-a" || strings.TrimSpace(appLines[2]) != "" || strings.TrimSpace(appLines[3]) != "new-b" {
+		t.Fatalf("expected updated block scalar with blank line preserved, got:\n%s", updatedApp)
+	}
+
+	updatedKeep := extractYamlMappingEntry(updated, "keep")
+	if !strings.Contains(updatedKeep, "keep: |-") || !strings.Contains(updatedKeep, "stay") {
+		t.Fatalf("expected following key to remain unchanged, got:\n%s", updatedKeep)
+	}
+}

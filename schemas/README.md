@@ -6,10 +6,12 @@ This folder contains YAML schema packs that k8s-lsp can load at startup.
 - You can also add more packs via the VS Code setting `k8sLsp.schemaSources`.
 
 Suggested packs:
+
 - `core.yaml`: core/apps/batch/rbac/storage/etc.
 - `networking.yaml`: Ingress/NetworkPolicy/IngressClass + Gateway API.
 
 ## Format
+
 Each YAML document registers an OpenAPIV3 schema for a Kubernetes GVK.
 
 ```yaml

@@ -12,21 +12,21 @@ import (
 //
 // Supported document shapes (multi-doc YAML supported; non-matching docs ignored):
 //
-// 1) Minimal pack doc:
-//   group: ""
-//   version: "v1"
-//   kind: "Pod"
-//   openAPIV3Schema: { ... }
+//  1. Minimal pack doc:
+//     group: ""
+//     version: "v1"
+//     kind: "Pod"
+//     openAPIV3Schema: { ... }
 //
-// 2) Spec-wrapped doc:
-//   apiVersion: k8s-lsp.dev/v1
-//   kind: Schema
-//   spec:
+//  2. Spec-wrapped doc:
+//     apiVersion: k8s-lsp.dev/v1
+//     kind: Schema
+//     spec:
 //     group: ""
 //     version: "v1"
 //     kind: "Pod"
 //     schema:
-//       openAPIV3Schema: { ... }
+//     openAPIV3Schema: { ... }
 func LoadGVKSchemasFromFile(reg *Registry, path string) (int, error) {
 	if reg == nil {
 		return 0, nil
@@ -84,17 +84,17 @@ func loadGVKSchemaFromDoc(reg *Registry, doc *yaml.Node) int {
 
 	// Shape 2: spec-wrapped.
 	if (version == "" || kind == "" || openapi == nil) && getMap(root, "spec") != nil {
-			spec := getMap(root, "spec")
+		spec := getMap(root, "spec")
 		if spec != nil {
-				if g := strings.TrimSpace(getMapScalar(spec, "group")); g != "" {
-					group = g
-				}
-				if v := strings.TrimSpace(getMapScalar(spec, "version")); v != "" {
-					version = v
-				}
-				if k := strings.TrimSpace(getMapScalar(spec, "kind")); k != "" {
-					kind = k
-				}
+			if g := strings.TrimSpace(getMapScalar(spec, "group")); g != "" {
+				group = g
+			}
+			if v := strings.TrimSpace(getMapScalar(spec, "version")); v != "" {
+				version = v
+			}
+			if k := strings.TrimSpace(getMapScalar(spec, "kind")); k != "" {
+				kind = k
+			}
 
 			// spec.schema.openAPIV3Schema or spec.openAPIV3Schema
 			if openapi == nil {

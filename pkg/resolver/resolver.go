@@ -2496,6 +2496,10 @@ func (r *Resolver) ResolveEmbeddedContent(docContent string, key string, nameAnd
 }
 
 func (r *Resolver) UpdateEmbeddedContent(docContent string, key string, newContent string) (string, error) {
+	if edit, err := r.BuildEmbeddedContentTextEdit(docContent, key, newContent, "", ""); err == nil && edit != nil {
+		return applyEmbeddedContentTextEdit(docContent, *edit)
+	}
+
 	stream, err := yamlstream.Parse(docContent)
 	if err != nil {
 		return "", err
@@ -2610,6 +2614,56 @@ func countLeadingSpaces(s string) int {
 	return count
 }
 
+func applyEmbeddedContentTextEdit(content string, edit protocol.TextEdit) (string, error) {
+	lines := strings.Split(content, "\n")
+	startLine := int(edit.Range.Start.Line)
+	startChar := int(edit.Range.Start.Character)
+	endLine := int(edit.Range.End.Line)
+	endChar := int(edit.Range.End.Character)
+
+	if startLine < 0 || startLine >= len(lines) {
+		return "", fmt.Errorf("invalid start line")
+	}
+	if endLine < startLine || endLine > len(lines) {
+		return "", fmt.Errorf("invalid end line")
+	}
+	if startChar < 0 || startChar > len(lines[startLine]) {
+		return "", fmt.Errorf("invalid start character")
+	}
+
+	if endLine == len(lines) {
+		endLine = len(lines) - 1
+		endChar = len(lines[endLine])
+	}
+	if endChar < 0 || endChar > len(lines[endLine]) {
+		return "", fmt.Errorf("invalid end character")
+	}
+	if startLine == endLine && endChar < startChar {
+		return "", fmt.Errorf("invalid range")
+	}
+
+	prefix := lines[startLine][:startChar]
+	suffix := lines[endLine][endChar:]
+
+	before := strings.Join(lines[:startLine], "\n")
+	after := strings.Join(lines[endLine+1:], "\n")
+
+	var b strings.Builder
+	if startLine > 0 {
+		b.WriteString(before)
+		b.WriteString("\n")
+	}
+	b.WriteString(prefix)
+	b.WriteString(edit.NewText)
+	b.WriteString(suffix)
+	if endLine+1 < len(lines) {
+		b.WriteString("\n")
+		b.WriteString(after)
+	}
+
+	return b.String(), nil
+}
+
 // BuildEmbeddedContentTextEdit returns a minimal edit that replaces only the YAML scalar value
 // for the given key under ConfigMap data/binaryData. This avoids re-serializing the whole YAML
 // document (which can change the style of other block scalars).
@@ -2626,10 +2680,11 @@ func (r *Resolver) BuildEmbeddedContentTextEdit(docContent string, key string, n
 			return nil, err
 		}
 
+		if findKind(&node) != "ConfigMap" {
+			continue
+		}
+
 		if configMapName != "" || namespace != "" {
-			if findKind(&node) != "ConfigMap" {
-				continue
-			}
 			if namespace != "" {
 				ns := findNamespace(&node)
 				if ns == "" {
@@ -2654,6 +2709,9 @@ func (r *Resolver) BuildEmbeddedContentTextEdit(docContent string, key string, n
 			for i := 0; i < len(root.Content); i += 2 {
 				if root.Content[i].Value == "data" || root.Content[i].Value == "binaryData" {
 					dataNode := root.Content[i+1]
+					if dataNode != nil && dataNode.Style == yaml.FlowStyle {
+						return nil, fmt.Errorf("flow-style ConfigMap data requires full document rewrite")
+					}
 					if dataNode.Kind == yaml.MappingNode {
 						for j := 0; j < len(dataNode.Content); j += 2 {
 							if dataNode.Content[j].Value == key {
@@ -2711,12 +2769,8 @@ func (r *Resolver) BuildEmbeddedContentTextEdit(docContent string, key string, n
 			nextLine := lines[stopLine]
 			trimmed := strings.TrimSpace(nextLine)
 			if trimmed == "" {
-				// Treat truly empty lines as terminators unless they are indented beyond baseIndent.
-				if countLeadingSpaces(nextLine) > baseIndent {
-					stopLine++
-					continue
-				}
-				break
+				stopLine++
+				continue
 			}
 			if countLeadingSpaces(nextLine) <= baseIndent {
 				break
@@ -2789,7 +2843,12 @@ func (r *Resolver) BuildEmbeddedContentTextEdit(docContent string, key string, n
 	edit := &protocol.TextEdit{
 		Range: protocol.Range{
 			Start: protocol.Position{Line: uint32(valueLineIdx), Character: uint32(valueCharIdx)},
-			End:   protocol.Position{Line: uint32(stopLine), Character: 0},
+			End:   protocol.Position{Line: uint32(stopLine), Character: uint32(func() int {
+				if isBlock || stopLine >= len(lines) {
+					return 0
+				}
+				return len(lines[stopLine])
+			}())},
 		},
 		NewText: replacement.String(),
 	}

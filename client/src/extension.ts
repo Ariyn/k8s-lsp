@@ -1,20 +1,38 @@
-import * as fs from 'fs';
-import * as path from 'path';
-import { ExtensionContext, Uri, Position, Range, DocumentLink, DocumentLinkProvider, TextDocument, CancellationToken, commands, window, workspace, languages, MarkdownString, Hover } from 'vscode';
+import * as fs from "fs";
+import * as path from "path";
+import {
+  ExtensionContext,
+  Uri,
+  Position,
+  Range,
+  DocumentLink,
+  DocumentLinkProvider,
+  TextDocument,
+  CancellationToken,
+  commands,
+  window,
+  workspace,
+  languages,
+  MarkdownString,
+  Hover,
+} from "vscode";
 
 import {
   LanguageClient,
   LanguageClientOptions,
   RevealOutputChannelOn,
   ServerOptions,
-  TransportKind
-} from 'vscode-languageclient/node';
-import { K8sFileSystemProvider } from './virtualDocumentProvider';
+  TransportKind,
+} from "vscode-languageclient/node";
+import { K8sFileSystemProvider } from "./virtualDocumentProvider";
 
 let client: LanguageClient;
 
 class SubPathDocumentLinkProvider implements DocumentLinkProvider {
-  provideDocumentLinks(document: TextDocument, _token: CancellationToken): DocumentLink[] {
+  provideDocumentLinks(
+    document: TextDocument,
+    _token: CancellationToken,
+  ): DocumentLink[] {
     const links: DocumentLink[] = [];
 
     for (let line = 0; line < document.lineCount; line++) {
@@ -25,7 +43,9 @@ class SubPathDocumentLinkProvider implements DocumentLinkProvider {
       //   subPath: some-file.yaml
       //   subPath: "some-file.yaml"
       //   subPath: 'some-file.yaml'
-      const match = /^\s*subPath\s*:\s*("([^"]+)"|'([^']+)'|([^\s#]+))/.exec(text);
+      const match = /^\s*subPath\s*:\s*("([^"]+)"|'([^']+)'|([^\s#]+))/.exec(
+        text,
+      );
       if (!match) {
         continue;
       }
@@ -40,14 +60,19 @@ class SubPathDocumentLinkProvider implements DocumentLinkProvider {
         continue;
       }
 
-      const range = new Range(line, valueStart, line, valueStart + value.length);
+      const range = new Range(
+        line,
+        valueStart,
+        line,
+        valueStart + value.length,
+      );
       const args = {
         uri: document.uri.toString(),
-        position: { line, character: valueStart }
+        position: { line, character: valueStart },
       };
 
       const cmdUri = Uri.parse(
-        `command:k8sLsp.showSubPathTargets?${encodeURIComponent(JSON.stringify(args))}`
+        `command:k8sLsp.showSubPathTargets?${encodeURIComponent(JSON.stringify(args))}`,
       );
 
       links.push(new DocumentLink(range, cmdUri));
@@ -58,29 +83,35 @@ class SubPathDocumentLinkProvider implements DocumentLinkProvider {
 }
 
 export function activate(context: ExtensionContext) {
-  const outputChannel = window.createOutputChannel('Kubernetes LSP');
-  outputChannel.appendLine('Activating Kubernetes LSP extension...');
+  const outputChannel = window.createOutputChannel("Kubernetes LSP");
+  outputChannel.appendLine("Activating Kubernetes LSP extension...");
 
   // Check if we are in development mode
   const isDev = context.extensionMode === 2; // ExtensionMode.Development
 
-  let serverPath = workspace.getConfiguration('k8sLsp').get<string>('serverPath');
-  
-  if (!serverPath || serverPath === 'k8s-lsp') {
-      if (isDev) {
-          // In dev mode, look for binary in the root of the workspace
-          serverPath = path.join(context.extensionPath, '..', 'k8s-lsp');
-      } else {
-          // In production, look for binary in the bin folder of the extension
-          // We support linux, windows (win32), and macos (darwin) with different architectures
-          const platform = process.platform;
-          const arch = process.arch;
-          const ext = platform === 'win32' ? '.exe' : '';
-          serverPath = context.asAbsolutePath(path.join('bin', platform, arch, 'k8s-lsp' + ext));
-      }
+  let serverPath = workspace
+    .getConfiguration("k8sLsp")
+    .get<string>("serverPath");
+
+  if (!serverPath || serverPath === "k8s-lsp") {
+    if (isDev) {
+      // In dev mode, look for binary in the root of the workspace
+      serverPath = path.join(context.extensionPath, "..", "k8s-lsp");
+    } else {
+      // In production, look for binary in the bin folder of the extension
+      // We support linux, windows (win32), and macos (darwin) with different architectures
+      const platform = process.platform;
+      const arch = process.arch;
+      const ext = platform === "win32" ? ".exe" : "";
+      serverPath = context.asAbsolutePath(
+        path.join("bin", platform, arch, "k8s-lsp" + ext),
+      );
+    }
   }
 
-  outputChannel.appendLine(`Extension mode: ${isDev ? 'development' : 'production'}`);
+  outputChannel.appendLine(
+    `Extension mode: ${isDev ? "development" : "production"}`,
+  );
   outputChannel.appendLine(`Server path: ${serverPath}`);
 
   // Fail fast with a visible error if the server binary can't be found.
@@ -96,52 +127,76 @@ export function activate(context: ExtensionContext) {
   // Otherwise the run options are used
   const serverOptions: ServerOptions = {
     run: { command: serverPath, transport: TransportKind.stdio },
-    debug: { command: serverPath, transport: TransportKind.stdio }
+    debug: { command: serverPath, transport: TransportKind.stdio },
   };
 
   // Options to control the language client
   const clientOptions: LanguageClientOptions = {
     // Register the server for plain text documents
-    documentSelector: [{ scheme: 'file', language: 'yaml' }],
+    documentSelector: [{ scheme: "file", language: "yaml" }],
     initializationOptions: {
-      crdSources: workspace.getConfiguration('k8sLsp').get<string[]>('crdSources') ?? [],
-      schemaSources: workspace.getConfiguration('k8sLsp').get<string[]>('schemaSources') ?? [],
-      diagnosticsDebounceMs: workspace.getConfiguration('k8sLsp').get<number>('diagnosticsDebounceMs'),
-      indexDebounceMs: workspace.getConfiguration('k8sLsp').get<number>('indexDebounceMs'),
+      crdSources:
+        workspace.getConfiguration("k8sLsp").get<string[]>("crdSources") ?? [],
+      schemaSources:
+        workspace.getConfiguration("k8sLsp").get<string[]>("schemaSources") ??
+        [],
+      diagnosticsDebounceMs: workspace
+        .getConfiguration("k8sLsp")
+        .get<number>("diagnosticsDebounceMs"),
+      indexDebounceMs: workspace
+        .getConfiguration("k8sLsp")
+        .get<number>("indexDebounceMs"),
       semanticTokens: {
-        enabled: workspace.getConfiguration('k8sLsp').get<boolean>('semanticTokens.enabled')
+        enabled: workspace
+          .getConfiguration("k8sLsp")
+          .get<boolean>("semanticTokens.enabled"),
       },
       referencesVisualization: {
-        enabled: workspace.getConfiguration('k8sLsp').get<boolean>('referencesVisualization.enabled')
+        enabled: workspace
+          .getConfiguration("k8sLsp")
+          .get<boolean>("referencesVisualization.enabled"),
       },
       codeLens: {
-        enabled: workspace.getConfiguration('k8sLsp').get<boolean>('codeLens.enabled')
+        enabled: workspace
+          .getConfiguration("k8sLsp")
+          .get<boolean>("codeLens.enabled"),
       },
       documentLinks: {
-        enabled: workspace.getConfiguration('k8sLsp').get<boolean>('documentLinks.enabled')
+        enabled: workspace
+          .getConfiguration("k8sLsp")
+          .get<boolean>("documentLinks.enabled"),
       },
       formatting: {
-        enabled: workspace.getConfiguration('k8sLsp').get<boolean>('formatting.enabled'),
-        indentSize: workspace.getConfiguration('k8sLsp').get<number>('formatting.indentSize'),
-        disableForTemplates: workspace.getConfiguration('k8sLsp').get<boolean>('formatting.disableForTemplates')
-      }
+        enabled: workspace
+          .getConfiguration("k8sLsp")
+          .get<boolean>("formatting.enabled"),
+        indentSize: workspace
+          .getConfiguration("k8sLsp")
+          .get<number>("formatting.indentSize"),
+        disableForTemplates: workspace
+          .getConfiguration("k8sLsp")
+          .get<boolean>("formatting.disableForTemplates"),
+      },
     },
     synchronize: {
       // Notify the server about file changes to '.clientrc files contained in the workspace
-      fileEvents: workspace.createFileSystemWatcher('**/*.{yaml,yml}')
+      fileEvents: workspace.createFileSystemWatcher("**/*.{yaml,yml}"),
     },
     outputChannel,
     revealOutputChannelOn: RevealOutputChannelOn.Error,
     middleware: {
       provideHover: async (document, position, token, next) => {
-        const hover = (await next(document, position, token)) as Hover | null | undefined;
+        const hover = (await next(document, position, token)) as
+          | Hover
+          | null
+          | undefined;
         if (!hover) {
           return hover;
         }
 
         const enableCommands = new Set([
-          'k8sLsp.openEmbeddedFile',
-          'k8sLsp.findEmbeddedFileUsages'
+          "k8sLsp.openEmbeddedFile",
+          "k8sLsp.findEmbeddedFileUsages",
         ]);
 
         const trustMarkdown = (value: unknown) => {
@@ -159,16 +214,16 @@ export function activate(context: ExtensionContext) {
         }
 
         return hover;
-      }
-    }
+      },
+    },
   };
 
   // Create the language client and start the client.
   client = new LanguageClient(
-    'k8sLsp',
-    'Kubernetes LSP',
+    "k8sLsp",
+    "Kubernetes LSP",
     serverOptions,
-    clientOptions
+    clientOptions,
   );
 
   // Start the client. This will also launch the server
@@ -176,100 +231,141 @@ export function activate(context: ExtensionContext) {
     client
       .start()
       .then(() => {
-
         const currentServerSettings = () => ({
-          crdSources: workspace.getConfiguration('k8sLsp').get<string[]>('crdSources') ?? [],
-          schemaSources: workspace.getConfiguration('k8sLsp').get<string[]>('schemaSources') ?? [],
-          diagnosticsDebounceMs: workspace.getConfiguration('k8sLsp').get<number>('diagnosticsDebounceMs'),
-          indexDebounceMs: workspace.getConfiguration('k8sLsp').get<number>('indexDebounceMs'),
+          crdSources:
+            workspace.getConfiguration("k8sLsp").get<string[]>("crdSources") ??
+            [],
+          schemaSources:
+            workspace
+              .getConfiguration("k8sLsp")
+              .get<string[]>("schemaSources") ?? [],
+          diagnosticsDebounceMs: workspace
+            .getConfiguration("k8sLsp")
+            .get<number>("diagnosticsDebounceMs"),
+          indexDebounceMs: workspace
+            .getConfiguration("k8sLsp")
+            .get<number>("indexDebounceMs"),
           semanticTokens: {
-            enabled: workspace.getConfiguration('k8sLsp').get<boolean>('semanticTokens.enabled')
+            enabled: workspace
+              .getConfiguration("k8sLsp")
+              .get<boolean>("semanticTokens.enabled"),
           },
           referencesVisualization: {
-            enabled: workspace.getConfiguration('k8sLsp').get<boolean>('referencesVisualization.enabled')
+            enabled: workspace
+              .getConfiguration("k8sLsp")
+              .get<boolean>("referencesVisualization.enabled"),
           },
           codeLens: {
-            enabled: workspace.getConfiguration('k8sLsp').get<boolean>('codeLens.enabled')
+            enabled: workspace
+              .getConfiguration("k8sLsp")
+              .get<boolean>("codeLens.enabled"),
           },
           documentLinks: {
-            enabled: workspace.getConfiguration('k8sLsp').get<boolean>('documentLinks.enabled')
+            enabled: workspace
+              .getConfiguration("k8sLsp")
+              .get<boolean>("documentLinks.enabled"),
           },
           formatting: {
-            enabled: workspace.getConfiguration('k8sLsp').get<boolean>('formatting.enabled'),
-            indentSize: workspace.getConfiguration('k8sLsp').get<number>('formatting.indentSize'),
-            disableForTemplates: workspace.getConfiguration('k8sLsp').get<boolean>('formatting.disableForTemplates')
-          }
+            enabled: workspace
+              .getConfiguration("k8sLsp")
+              .get<boolean>("formatting.enabled"),
+            indentSize: workspace
+              .getConfiguration("k8sLsp")
+              .get<number>("formatting.indentSize"),
+            disableForTemplates: workspace
+              .getConfiguration("k8sLsp")
+              .get<boolean>("formatting.disableForTemplates"),
+          },
         });
 
         const sendServerSettings = () => {
-          client.sendNotification('workspace/didChangeConfiguration', {
-            settings: currentServerSettings()
+          client.sendNotification("workspace/didChangeConfiguration", {
+            settings: currentServerSettings(),
           });
         };
 
         const provider = new K8sFileSystemProvider(client);
-        context.subscriptions.push(workspace.registerFileSystemProvider('k8s-embedded', provider, {
-          isCaseSensitive: true,
-          isReadonly: false
-        }));
+        context.subscriptions.push(
+          workspace.registerFileSystemProvider("k8s-embedded", provider, {
+            isCaseSensitive: true,
+            isReadonly: false,
+          }),
+        );
 
         // Keep the server in sync with runtime configuration changes.
         // This enables schema/CRD source reloads without requiring a restart.
         sendServerSettings();
         context.subscriptions.push(
           workspace.onDidChangeConfiguration((e) => {
-            if (e.affectsConfiguration('k8sLsp')) {
+            if (e.affectsConfiguration("k8sLsp")) {
               sendServerSettings();
             }
-          })
+          }),
         );
 
         context.subscriptions.push(
-          commands.registerCommand('k8sLsp.openEmbeddedFile', async (args: any) => {
-            const uriStr = typeof args === 'string' ? args : args?.uri;
-            if (!uriStr) {
-              return;
-            }
-            const uri = Uri.parse(uriStr);
-            const doc = await workspace.openTextDocument(uri);
-            await window.showTextDocument(doc, { preview: false });
-          })
+          commands.registerCommand(
+            "k8sLsp.openEmbeddedFile",
+            async (args: any) => {
+              const uriStr = typeof args === "string" ? args : args?.uri;
+              if (!uriStr) {
+                return;
+              }
+              const uri = Uri.parse(uriStr);
+              const doc = await workspace.openTextDocument(uri);
+              await window.showTextDocument(doc, { preview: false });
+            },
+          ),
         );
 
         context.subscriptions.push(
-          commands.registerCommand('k8sLsp.findEmbeddedFileUsages', async (args: any) => {
-            const uriStr = args?.uri as string | undefined;
-            const pos = args?.position as { line: number; character: number } | undefined;
-            if (!uriStr || !pos) {
-              return;
-            }
+          commands.registerCommand(
+            "k8sLsp.findEmbeddedFileUsages",
+            async (args: any) => {
+              const uriStr = args?.uri as string | undefined;
+              const pos = args?.position as
+                | { line: number; character: number }
+                | undefined;
+              if (!uriStr || !pos) {
+                return;
+              }
 
-            const uri = Uri.parse(uriStr);
-            const position = new Position(pos.line, pos.character);
+              const uri = Uri.parse(uriStr);
+              const position = new Position(pos.line, pos.character);
 
-            // Ask the LSP server for references at the given position.
-            const lspLocations = await client.sendRequest<any[]>('textDocument/references', {
-              textDocument: { uri: uriStr },
-              position: { line: pos.line, character: pos.character },
-              context: { includeDeclaration: false }
-            });
+              // Ask the LSP server for references at the given position.
+              const lspLocations = await client.sendRequest<any[]>(
+                "textDocument/references",
+                {
+                  textDocument: { uri: uriStr },
+                  position: { line: pos.line, character: pos.character },
+                  context: { includeDeclaration: false },
+                },
+              );
 
-            const vscodeLocations = [] as any[];
-            if (Array.isArray(lspLocations)) {
-              for (const loc of lspLocations) {
-                const converted = await client.protocol2CodeConverter.asLocation(loc);
-                if (converted) {
-                  vscodeLocations.push(converted);
+              const vscodeLocations = [] as any[];
+              if (Array.isArray(lspLocations)) {
+                for (const loc of lspLocations) {
+                  const converted =
+                    await client.protocol2CodeConverter.asLocation(loc);
+                  if (converted) {
+                    vscodeLocations.push(converted);
+                  }
                 }
               }
-            }
 
-            if (vscodeLocations.length === 0) {
-              return;
-            }
+              if (vscodeLocations.length === 0) {
+                return;
+              }
 
-            await commands.executeCommand('editor.action.showReferences', uri, position, vscodeLocations);
-          })
+              await commands.executeCommand(
+                "editor.action.showReferences",
+                uri,
+                position,
+                vscodeLocations,
+              );
+            },
+          ),
         );
 
         const asVscodeLocations = async (lspItems: any[]): Promise<any[]> => {
@@ -280,7 +376,9 @@ export function activate(context: ExtensionContext) {
           for (const it of lspItems) {
             // Prefer protocol2CodeConverter when possible.
             try {
-              const converted = await (client as any).protocol2CodeConverter.asLocation(it);
+              const converted = await (
+                client as any
+              ).protocol2CodeConverter.asLocation(it);
               if (converted) {
                 out.push(converted);
                 continue;
@@ -290,7 +388,8 @@ export function activate(context: ExtensionContext) {
             }
 
             const targetUri = it?.targetUri ?? it?.uri;
-            const targetRange = it?.targetSelectionRange ?? it?.targetRange ?? it?.range;
+            const targetRange =
+              it?.targetSelectionRange ?? it?.targetRange ?? it?.range;
             if (!targetUri || !targetRange) {
               continue;
             }
@@ -300,7 +399,7 @@ export function activate(context: ExtensionContext) {
               targetRange.start.line,
               targetRange.start.character,
               targetRange.end.line,
-              targetRange.end.character
+              targetRange.end.character,
             );
             out.push({ uri, range });
           }
@@ -308,98 +407,140 @@ export function activate(context: ExtensionContext) {
         };
 
         context.subscriptions.push(
-          commands.registerCommand('k8sLsp.peekDefinition', async (args: any) => {
-            const uriStr = args?.uri as string | undefined;
-            const pos = args?.position as { line: number; character: number } | undefined;
-            if (!uriStr || !pos) {
-              return;
-            }
+          commands.registerCommand(
+            "k8sLsp.peekDefinition",
+            async (args: any) => {
+              const uriStr = args?.uri as string | undefined;
+              const pos = args?.position as
+                | { line: number; character: number }
+                | undefined;
+              if (!uriStr || !pos) {
+                return;
+              }
 
-            const uri = Uri.parse(uriStr);
-            const position = new Position(pos.line, pos.character);
+              const uri = Uri.parse(uriStr);
+              const position = new Position(pos.line, pos.character);
 
-            const lspLinks = await client.sendRequest<any[]>('textDocument/definition', {
-              textDocument: { uri: uriStr },
-              position: { line: pos.line, character: pos.character }
-            });
+              const lspLinks = await client.sendRequest<any[]>(
+                "textDocument/definition",
+                {
+                  textDocument: { uri: uriStr },
+                  position: { line: pos.line, character: pos.character },
+                },
+              );
 
-            const vscodeLocations = await asVscodeLocations(lspLinks);
-            if (vscodeLocations.length === 0) {
-              return;
-            }
+              const vscodeLocations = await asVscodeLocations(lspLinks);
+              if (vscodeLocations.length === 0) {
+                return;
+              }
 
-            await commands.executeCommand('editor.action.showReferences', uri, position, vscodeLocations);
-          })
+              await commands.executeCommand(
+                "editor.action.showReferences",
+                uri,
+                position,
+                vscodeLocations,
+              );
+            },
+          ),
         );
 
         context.subscriptions.push(
-          commands.registerCommand('k8sLsp.goToDefinition', async (args: any) => {
-            const uriStr = args?.uri as string | undefined;
-            const pos = args?.position as { line: number; character: number } | undefined;
-            if (!uriStr || !pos) {
-              return;
-            }
+          commands.registerCommand(
+            "k8sLsp.goToDefinition",
+            async (args: any) => {
+              const uriStr = args?.uri as string | undefined;
+              const pos = args?.position as
+                | { line: number; character: number }
+                | undefined;
+              if (!uriStr || !pos) {
+                return;
+              }
 
-            const lspLinks = await client.sendRequest<any[]>('textDocument/definition', {
-              textDocument: { uri: uriStr },
-              position: { line: pos.line, character: pos.character }
-            });
+              const lspLinks = await client.sendRequest<any[]>(
+                "textDocument/definition",
+                {
+                  textDocument: { uri: uriStr },
+                  position: { line: pos.line, character: pos.character },
+                },
+              );
 
-            const vscodeLocations = await asVscodeLocations(lspLinks);
-            if (vscodeLocations.length === 0) {
-              return;
-            }
+              const vscodeLocations = await asVscodeLocations(lspLinks);
+              if (vscodeLocations.length === 0) {
+                return;
+              }
 
-            const first = vscodeLocations[0];
-            const doc = await workspace.openTextDocument(first.uri);
-            await window.showTextDocument(doc, { selection: first.range, preview: true });
-          })
+              const first = vscodeLocations[0];
+              const doc = await workspace.openTextDocument(first.uri);
+              await window.showTextDocument(doc, {
+                selection: first.range,
+                preview: true,
+              });
+            },
+          ),
         );
 
         context.subscriptions.push(
-          commands.registerCommand('k8sLsp.showSubPathTargets', async (args: any) => {
-            const uriStr = args?.uri as string | undefined;
-            const pos = args?.position as { line: number; character: number } | undefined;
-            if (!uriStr || !pos) {
-              return;
-            }
+          commands.registerCommand(
+            "k8sLsp.showSubPathTargets",
+            async (args: any) => {
+              const uriStr = args?.uri as string | undefined;
+              const pos = args?.position as
+                | { line: number; character: number }
+                | undefined;
+              if (!uriStr || !pos) {
+                return;
+              }
 
-            const uri = Uri.parse(uriStr);
-            const position = new Position(pos.line, pos.character);
+              const uri = Uri.parse(uriStr);
+              const position = new Position(pos.line, pos.character);
 
-            const lspLocations = await client.sendRequest<any[]>('textDocument/references', {
-              textDocument: { uri: uriStr },
-              position: { line: pos.line, character: pos.character },
-              context: { includeDeclaration: false }
-            });
+              const lspLocations = await client.sendRequest<any[]>(
+                "textDocument/references",
+                {
+                  textDocument: { uri: uriStr },
+                  position: { line: pos.line, character: pos.character },
+                  context: { includeDeclaration: false },
+                },
+              );
 
-            const vscodeLocations = [] as any[];
-            if (Array.isArray(lspLocations)) {
-              for (const loc of lspLocations) {
-                const converted = await client.protocol2CodeConverter.asLocation(loc);
-                if (converted) {
-                  vscodeLocations.push(converted);
+              const vscodeLocations = [] as any[];
+              if (Array.isArray(lspLocations)) {
+                for (const loc of lspLocations) {
+                  const converted =
+                    await client.protocol2CodeConverter.asLocation(loc);
+                  if (converted) {
+                    vscodeLocations.push(converted);
+                  }
                 }
               }
-            }
 
-            await commands.executeCommand('editor.action.showReferences', uri, position, vscodeLocations);
-          })
+              await commands.executeCommand(
+                "editor.action.showReferences",
+                uri,
+                position,
+                vscodeLocations,
+              );
+            },
+          ),
         );
 
         context.subscriptions.push(
           languages.registerDocumentLinkProvider(
-            [{ scheme: 'file', language: 'yaml' }],
-            new SubPathDocumentLinkProvider()
-          )
+            [{ scheme: "file", language: "yaml" }],
+            new SubPathDocumentLinkProvider(),
+          ),
         );
       })
       .catch((err) => {
-        outputChannel.appendLine(`Failed to start language client: ${String(err)}`);
+        outputChannel.appendLine(
+          `Failed to start language client: ${String(err)}`,
+        );
         outputChannel.show(true);
       });
   } catch (err) {
-    outputChannel.appendLine(`Exception while starting language client: ${String(err)}`);
+    outputChannel.appendLine(
+      `Exception while starting language client: ${String(err)}`,
+    );
     outputChannel.show(true);
   }
 }
